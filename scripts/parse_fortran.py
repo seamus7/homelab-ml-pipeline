@@ -138,15 +138,96 @@ def _extract_calls(body_lines: list[str]) -> list[str]:
 
         for m in _RE_CALL.finditer(clean):
             name = m.group(1).lower()
-            if name not in _SKIP_CALLS:
+            if name not in _SKIP_CALLS and not name.isdigit() and len(name) > 1:
                 found.add(name)
 
         for m in _RE_FUNC_INVOKE.finditer(clean):
             name = m.group(1).lower()
-            if name not in _SKIP_CALLS:
+            if name not in _SKIP_CALLS and not name.isdigit() and len(name) > 1:
                 found.add(name)
 
     return sorted(found)
+
+
+# ---------------------------------------------------------------------------
+# Continuation-line preprocessor
+# ---------------------------------------------------------------------------
+
+def preprocess_lines(lines: list[str], is_fixed: bool) -> list[str]:
+    """Return a list of the same length as `lines` with continuation lines joined.
+
+    Continuation lines become empty strings; the joined logical line sits at
+    the index of the first physical line of the group.  Line-number tracking
+    in parse_file therefore stays accurate: lineno still maps 1-to-1 with the
+    original file.
+
+    Fixed-format (.f / .for): a non-space, non-'0' character at column index 5
+    (0-based) marks a continuation.  Columns 0-5 of the continuation are stripped
+    before joining.
+
+    Free-format (.f90): a trailing & (after stripping inline comments) marks the
+    current line as continued; the & is removed and the next line is joined.
+    """
+    result = list(lines)
+    n = len(lines)
+    i = 0
+
+    if is_fixed:
+        while i < n:
+            raw = lines[i].rstrip('\n').rstrip('\r')
+            # Skip comment lines and lines that are themselves continuations
+            # (they get consumed below when we process the statement they belong to).
+            if _is_comment(raw):
+                i += 1
+                continue
+            if len(raw) > 5 and raw[5] not in (' ', '0'):
+                # Orphaned continuation (shouldn't occur in well-formed code);
+                # leave in place so it doesn't silently vanish.
+                i += 1
+                continue
+
+            # Logical statement starts here — collect any following continuations.
+            logical = raw
+            j = i + 1
+            while j < n:
+                cont = lines[j].rstrip('\n').rstrip('\r')
+                if _is_comment(cont):
+                    j += 1          # comments may appear between continuations
+                    continue
+                if len(cont) > 5 and cont[5] not in (' ', '0'):
+                    stmt = cont[6:] if len(cont) > 6 else ''
+                    logical = logical.rstrip() + ' ' + stmt
+                    result[j] = ''
+                    j += 1
+                else:
+                    break
+            result[i] = logical + '\n'
+            i = j
+    else:
+        while i < n:
+            raw = lines[i].rstrip('\n').rstrip('\r')
+            clean = _strip_inline_comment(raw).rstrip()
+            if not clean.endswith('&'):
+                i += 1
+                continue
+            # Logical line continues onto the next physical line(s).
+            logical = clean[:-1].rstrip()
+            j = i + 1
+            while j < n:
+                cont = _strip_inline_comment(lines[j]).rstrip()
+                if cont.endswith('&'):
+                    logical += ' ' + cont[:-1].strip()
+                    result[j] = ''
+                    j += 1
+                else:
+                    logical += ' ' + cont.strip()
+                    result[j] = ''
+                    j += 1
+                    break
+            result[i] = logical + '\n'
+            i = j
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -170,15 +251,23 @@ def parse_file(filepath: Path, base_dir: Path) -> list[dict]:
     except ValueError:
         rel_path = str(filepath)
 
+    is_fixed = filepath.suffix.lower() in ('.f', '.for')
+    # proc_lines has the same length as lines; continuation groups are joined
+    # onto the first physical line, consumed lines become ''.  All line-number
+    # references below (start, lineno) still map correctly to the original file.
+    proc_lines = preprocess_lines(lines, is_fixed)
+
     chunks: list[dict] = []
     # Stack entries: (unit_type, name, 1-based start line)
     scope_stack: list[tuple[str, str, int]] = []
 
-    for lineno, raw in enumerate(lines, start=1):
-        if _is_comment(raw):
+    for lineno, proc in enumerate(proc_lines, start=1):
+        if not proc.strip():
+            continue
+        if _is_comment(proc):
             continue
 
-        clean = _strip_inline_comment(raw).rstrip()
+        clean = _strip_inline_comment(proc).rstrip()
 
         # --- Check for unit start ---
         m = _RE_START.match(clean)

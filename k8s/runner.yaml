@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runner
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runner-config
+data:
+  config.yaml: |
+    container:
+      docker_host: "tcp://localhost:2375"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runner
+  template:
+    metadata:
+      labels:
+        app: runner
+    spec:
+      serviceAccountName: runner
+      containers:
+        - name: runner
+          image: gitea/act_runner:latest
+          env:
+            - name: GITEA_INSTANCE_URL
+              value: "http://gitea:3000"
+            - name: GITEA_RUNNER_NAME
+              value: "homelab-runner"
+            - name: GITEA_RUNNER_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: runner-secret
+                  key: RUNNER_TOKEN
+            - name: CONFIG_FILE
+              value: /etc/act_runner/config.yaml
+            - name: DOCKER_HOST
+              value: tcp://localhost:2375
+          volumeMounts:
+            - name: runner-config
+              mountPath: /etc/act_runner
+
+        - name: dind
+          image: docker:dind
+          securityContext:
+            privileged: true
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          args:
+            - --dns=10.43.0.10
+            - --dns-search=default.svc.cluster.local
+            - --dns-search=svc.cluster.local
+            - --dns-search=cluster.local
+          volumeMounts:
+            - name: dind-storage
+              mountPath: /var/lib/docker
+
+      volumes:
+        - name: runner-config
+          configMap:
+            name: runner-config
+        - name: dind-storage
+          emptyDir: {}

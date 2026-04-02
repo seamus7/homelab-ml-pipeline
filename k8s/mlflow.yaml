@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-artifacts-pvc
+spec:
+  storageClassName: local-path
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      containers:
+        - name: mlflow
+          image: ghcr.io/mlflow/mlflow:latest
+          ports:
+            - containerPort: 5000
+          env:
+            # Injected from secret so it can be referenced via $(POSTGRES_PASSWORD)
+            # in the command below — Kubernetes performs env var substitution in
+            # args before the process starts.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+          command:
+            - mlflow
+            - server
+            - --backend-store-uri
+            - postgresql://admin:$(POSTGRES_PASSWORD)@db:5432/mlflow
+            - --default-artifact-root
+            - mlflow-artifacts:/
+            - --artifacts-destination
+            - /mlflow_artifacts
+            - --serve-artifacts
+            - --host
+            - "0.0.0.0"
+            - --allowed-hosts
+            - mlflow.homelab.local
+            - --cors-allowed-origins
+            - http://mlflow.homelab.local
+          volumeMounts:
+            - name: mlflow-artifacts
+              mountPath: /mlflow_artifacts
+          readinessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+      volumes:
+        - name: mlflow-artifacts
+          persistentVolumeClaim:
+            claimName: mlflow-artifacts-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: mlflow
+  ports:
+    - port: 5000
+      targetPort: 5000
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mlflow
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: mlflow.homelab.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mlflow-svc
+                port:
+                  number: 5000

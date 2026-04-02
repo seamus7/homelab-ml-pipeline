@@ -6,7 +6,7 @@ services:
   db:
     image: postgres:15-alpine
     container_name: homelab-db
-    restart: unless-stopped
+    restart: "no"
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -23,7 +23,7 @@ services:
   gitea:
     image: gitea/gitea:latest
     container_name: homelab-git
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       db:
         condition: service_healthy
@@ -31,6 +31,9 @@ services:
     volumes: ["./gitea_data:/data"]
     networks: [homelab]
     environment:
+      - GITEA__server__ROOT_URL=http://10.73.1.145:3000
+      - GITEA__server__SSH_DOMAIN=10.73.1.145
+      - GITEA__server__SSH_PORT=2222
       - GITEA__database__DB_TYPE=postgres
       - GITEA__database__HOST=db:5432
       - GITEA__database__NAME=gitea
@@ -40,7 +43,7 @@ services:
   mlflow:
     image: ghcr.io/mlflow/mlflow:latest
     container_name: homelab-mlflow
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       db:
         condition: service_healthy
@@ -55,11 +58,14 @@ services:
       --artifacts-destination /mlflow_artifacts
       --serve-artifacts
       --host 0.0.0.0
+      --allowed-hosts 10.73.1.145:5000
+      --cors-allowed-origins http://10.73.1.145:5000
+      --dev
 
   ollama:
     image: ollama/ollama:latest
     container_name: homelab-ollama
-    restart: unless-stopped
+    restart: "no"
     deploy:
       resources:
         reservations:
@@ -70,3 +76,20 @@ services:
     volumes: ["./ollama_data:/root/.ollama"]
     ports: ["11435:11434"]
     networks: [homelab]
+
+  runner:
+    image: gitea/act_runner:latest
+    container_name: homelab-runner
+    ports:
+      - "8088:8088"
+    restart: "no"
+    depends_on:
+      - gitea
+    networks: [homelab]
+    volumes:
+      - ./runner_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - GITEA_INSTANCE_URL=http://10.73.1.145:3000
+      - GITEA_RUNNER_REGISTRATION_TOKEN=${RUNNER_TOKEN}
+      - GITEA_RUNNER_NAME=homelab-runner

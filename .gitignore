@@ -1,0 +1,24 @@
+# Credentials
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Data directories - large, sensitive, or ephemeral
+postgres_data/
+gitea_data/
+ollama_data/
+mlflow_artifacts/
+runner_data/
+local_mlruns/
+
+# Artifacts
+analysis_report.txt
+report.txt
+memory/*
+
+# OS
+.DS_Store
+.aider*
