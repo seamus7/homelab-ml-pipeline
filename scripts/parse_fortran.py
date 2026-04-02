@@ -89,7 +89,7 @@ _RE_FUNC_INVOKE = re.compile(r"\b(\w+)\s*\(", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------------------
 
 def _is_comment(line: str) -> bool:
     """Return True if this entire line is a Fortran comment."""
@@ -124,6 +124,11 @@ def _strip_inline_comment(line: str) -> str:
     return "".join(result)
 
 
+def _is_numeric_or_single_char(name: str) -> bool:
+    """Return True if name is purely numeric or a single character."""
+    return name.isdigit() or (len(name) == 1 and name.isalpha())
+
+
 def _extract_calls(body_lines: list[str]) -> list[str]:
     """Return sorted, deduplicated list of called routine names from body_lines.
 
@@ -138,20 +143,83 @@ def _extract_calls(body_lines: list[str]) -> list[str]:
 
         for m in _RE_CALL.finditer(clean):
             name = m.group(1).lower()
-            if name not in _SKIP_CALLS:
+            if name not in _SKIP_CALLS and not _is_numeric_or_single_char(name):
                 found.add(name)
 
         for m in _RE_FUNC_INVOKE.finditer(clean):
             name = m.group(1).lower()
-            if name not in _SKIP_CALLS:
+            if name not in _SKIP_CALLS and not _is_numeric_or_single_char(name):
                 found.add(name)
 
     return sorted(found)
 
 
+def preprocess_lines(lines: list[str], is_fixed_format: bool) -> list[str]:
+    """Join continuation lines for Fortran source.
+    
+    For fixed-format (.f, .for): non-space, non-zero in column 6 indicates continuation.
+    For free-format (.f90): trailing & indicates continuation.
+    """
+    if not lines:
+        return []
+    
+    processed = []
+    current_line = ""
+    
+    for line in lines:
+        # Remove trailing newline/whitespace for processing
+        line_content = line.rstrip()
+        
+        if is_fixed_format:
+            # Fixed-format: column 6 (index 5) non-space, non-zero means continuation
+            if len(line) >= 6:
+                if line[5] not in (' ', '0'):
+                    # This line continues the previous one
+                    if current_line:
+                        # Remove trailing continuation marker if present
+                        current_line = current_line.rstrip()
+                        # Remove trailing & if present (some fixed-format code uses it)
+                        if current_line.endswith('&'):
+                            current_line = current_line[:-1]
+                        current_line += line_content.lstrip()
+                    else:
+                        current_line = line_content
+                    continue
+                else:
+                    # Not a continuation line
+                    if current_line:
+                        processed.append(current_line)
+                    current_line = line_content
+            else:
+                # Line too short for fixed-format, treat as continuation if we have one
+                if current_line:
+                    current_line += line_content
+                else:
+                    current_line = line_content
+        else:
+            # Free-format: check for trailing &
+            if current_line:
+                # Check if previous line ended with &
+                if current_line.rstrip().endswith('&'):
+                    # Remove the & and append this line
+                    current_line = current_line.rstrip()[:-1] + line_content.lstrip()
+                else:
+                    # Previous line is complete
+                    processed.append(current_line)
+                    current_line = line_content
+            else:
+                current_line = line_content
+    
+    # Don't forget the last line
+    if current_line:
+        processed.append(current_line)
+    
+    return processed
+
+
 # ---------------------------------------------------------------------------
 # Core parser
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------------------
 
 def parse_file(filepath: Path, base_dir: Path) -> list[dict]:
     """
@@ -165,6 +233,14 @@ def parse_file(filepath: Path, base_dir: Path) -> list[dict]:
         return []
 
     lines = text.splitlines(keepends=True)
+    
+    # Determine format based on extension
+    ext = filepath.suffix.lower()
+    is_fixed_format = ext in {'.f', '.for'}
+    
+    # Preprocess lines to handle continuations
+    lines = preprocess_lines(lines, is_fixed_format)
+    
     try:
         rel_path = str(filepath.relative_to(base_dir))
     except ValueError:
@@ -224,7 +300,7 @@ def parse_file(filepath: Path, base_dir: Path) -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # File collection
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------
 
 _FORTRAN_EXTS = {".f90", ".f", ".for"}
 
@@ -256,7 +332,7 @@ def _common_base(files: list[Path]) -> Path:
 
 # ---------------------------------------------------------------------------
 # Entry point
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------
 
 def main() -> None:
     ap = argparse.ArgumentParser(
