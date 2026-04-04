@@ -1,0 +1,105 @@
+# TODO: replace with proper container image
+# Currently uses python:3.12-slim with inline pip install at startup.
+# Next step: build a Dockerfile that COPYs app/ and scripts/ and pre-installs deps.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: modernizer-config
+  namespace: default
+data:
+  OLLAMA_URL: "http://ollama:11434"
+  QDRANT_URL: "http://qdrant:6333"
+  COLLECTION: "fortran_subroutines"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modernizer
+  namespace: default
+  labels:
+    app: modernizer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: modernizer
+  template:
+    metadata:
+      labels:
+        app: modernizer
+    spec:
+      containers:
+        - name: modernizer
+          # TODO: replace with proper container image
+          image: python:3.12-slim
+          command:
+            - /bin/sh
+            - -c
+            - |
+              pip install --quiet fastapi "uvicorn[standard]" &&
+              uvicorn app.main:app --host 0.0.0.0 --port 8000
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: modernizer-config
+          workingDir: /app
+          # Scripts and app code must be present at /app.
+          # Mount points below expect the repo to be baked into the image.
+          # Until a proper image exists, use a hostPath volume pointing at the
+          # checked-out repo on the node.
+          volumeMounts:
+            - name: repo
+              mountPath: /app
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: repo
+          hostPath:
+            path: /home/francis/repos/homelab-v2
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: modernizer
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: modernizer
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: modernizer
+  namespace: default
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: modernizer.homelab.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: modernizer
+                port:
+                  number: 8000
