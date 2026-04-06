@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fortran Modernizer — Codebase Search</title>
+  <title>Fortran Modernizer</title>
   <style>
     /* ── Reset & base ──────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,8 +19,10 @@
       --accent:       #58a6ff;
       --accent-dim:   #1f3a5a;
       --green:        #3fb950;
+      --green-dim:    #0d2818;
       --yellow:       #d29922;
       --red:          #f85149;
+      --red-dim:      #2d0f0e;
       --code-bg:      #0d1117;
       --mono:         'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
       --sans:         'Segoe UI', system-ui, sans-serif;
@@ -37,16 +39,16 @@
 
     /* ── Layout ─────────────────────────────────────────────────────────── */
     .page {
-      max-width: 860px;
+      max-width: 1000px;
       margin: 0 auto;
       padding: 0 16px 48px;
     }
 
     /* ── Header ─────────────────────────────────────────────────────────── */
     header {
-      padding: 40px 0 28px;
+      padding: 40px 0 24px;
       border-bottom: 1px solid var(--border);
-      margin-bottom: 28px;
+      margin-bottom: 0;
     }
 
     .header-title {
@@ -64,14 +66,48 @@
       font-size: 13px;
     }
 
+    /* ── Tabs ───────────────────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 28px;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      padding: 12px 20px;
+      text-transform: uppercase;
+      transition: color 0.15s, border-color 0.15s;
+      margin-bottom: -1px;
+    }
+
+    .tab-btn:hover { color: var(--text); }
+
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     /* ── Search bar ──────────────────────────────────────────────────────── */
-    .search-row {
+    .input-row {
       display: flex;
       gap: 8px;
       margin-bottom: 24px;
     }
 
-    #query {
+    .text-input {
       flex: 1;
       background: var(--surface);
       border: 1px solid var(--border);
@@ -84,10 +120,10 @@
       transition: border-color 0.15s;
     }
 
-    #query:focus { border-color: var(--border-hi); }
-    #query::placeholder { color: var(--text-muted); }
+    .text-input:focus { border-color: var(--border-hi); }
+    .text-input::placeholder { color: var(--text-muted); }
 
-    #search-btn {
+    .action-btn {
       background: var(--accent-dim);
       border: 1px solid var(--accent);
       border-radius: 6px;
@@ -103,24 +139,24 @@
       white-space: nowrap;
     }
 
-    #search-btn:hover:not(:disabled) {
+    .action-btn:hover:not(:disabled) {
       background: var(--accent);
       color: var(--bg);
     }
 
-    #search-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
     /* ── Status line ─────────────────────────────────────────────────────── */
-    #status {
+    .status-line {
       font-family: var(--mono);
       font-size: 13px;
       min-height: 20px;
       margin-bottom: 16px;
     }
 
-    #status.loading { color: var(--text-muted); }
-    #status.error   { color: var(--red); }
-    #status.info    { color: var(--text-muted); }
+    .status-line.loading { color: var(--text-muted); }
+    .status-line.error   { color: var(--red); }
+    .status-line.info    { color: var(--text-muted); }
 
     .spinner {
       display: inline-block;
@@ -136,8 +172,8 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── Result cards ────────────────────────────────────────────────────── */
-    #results { display: flex; flex-direction: column; gap: 16px; }
+    /* ── Search result cards ─────────────────────────────────────────────── */
+    #search-results { display: flex; flex-direction: column; gap: 16px; }
 
     .card {
       background: var(--surface);
@@ -149,7 +185,6 @@
 
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
 
-    /* card header */
     .card-header {
       display: flex;
       align-items: baseline;
@@ -195,7 +230,6 @@
       white-space: nowrap;
     }
 
-    /* card body sections */
     .card-section { padding: 12px 16px; }
     .card-section + .card-section { border-top: 1px solid var(--border); }
 
@@ -215,7 +249,6 @@
       color: var(--text);
     }
 
-    /* calls badges */
     .calls-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
 
     .call-badge {
@@ -235,7 +268,6 @@
       font-style: italic;
     }
 
-    /* code block */
     .code-wrap { position: relative; }
 
     pre.code-block {
@@ -264,32 +296,177 @@
       transition: color 0.1s, border-color 0.1s;
     }
 
-    .show-more-btn:hover {
-      color: var(--accent);
-      border-color: var(--accent);
+    .show-more-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+    /* ── Health report table ─────────────────────────────────────────────── */
+    .health-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 4px;
     }
+
+    table.health-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .health-table thead tr {
+      background: var(--surface2);
+    }
+
+    .health-table th {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text);
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      background: var(--surface2);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .health-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .health-table tbody tr:last-child td { border-bottom: none; }
+
+    .health-table tbody tr:hover { background: var(--surface2); }
+
+    /* summary footer row */
+    .health-table tfoot tr {
+      background: var(--surface2);
+    }
+
+    .health-table tfoot td {
+      font-weight: 700;
+      font-size: 12px;
+      border-top: 2px solid var(--border);
+      border-bottom: none;
+      color: var(--text);
+    }
+
+    /* cell coloring */
+    td.cell-ok  { background: var(--green-dim); color: var(--green); }
+    td.cell-bad { background: var(--red-dim);   color: var(--red);   }
+
+    /* name column */
+    .health-table .col-name {
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .health-table .col-file {
+      color: var(--text-muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    /* health summary cards */
+    .health-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .summary-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 16px;
+      min-width: 120px;
+      text-align: center;
+    }
+
+    .summary-card .sc-value {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .summary-card .sc-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .summary-card.bad .sc-value  { color: var(--red); }
+    .summary-card.warn .sc-value { color: var(--yellow); }
+    .summary-card.ok .sc-value   { color: var(--green); }
+    .summary-card.neutral .sc-value { color: var(--accent); }
   </style>
 </head>
 <body>
   <div class="page">
     <header>
       <div class="header-title">⬡ Fortran Modernizer</div>
-      <div class="header-sub">Semantic search over parsed &amp; summarized Fortran subroutines</div>
+      <div class="header-sub">Semantic search &amp; code health analysis over Fortran subroutines</div>
     </header>
 
-    <div class="search-row">
-      <input id="query" type="text" placeholder="e.g. coordinate transformation between reference frames" autocomplete="off" spellcheck="false">
-      <button id="search-btn">Search</button>
+    <!-- ── Tabs ─────────────────────────────────────────────────────────── -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="search">Search</button>
+      <button class="tab-btn"        data-tab="health">Health Report</button>
     </div>
 
-    <div id="status"></div>
-    <div id="results"></div>
+    <!-- ── Search panel ─────────────────────────────────────────────────── -->
+    <div id="tab-search" class="tab-panel active">
+      <div class="input-row">
+        <input id="query" class="text-input" type="text"
+               placeholder="e.g. coordinate transformation between reference frames"
+               autocomplete="off" spellcheck="false">
+        <button id="search-btn" class="action-btn">Search</button>
+      </div>
+      <div id="search-status" class="status-line"></div>
+      <div id="search-results"></div>
+    </div>
+
+    <!-- ── Health panel ──────────────────────────────────────────────────── -->
+    <div id="tab-health" class="tab-panel">
+      <div class="input-row">
+        <input id="health-path" class="text-input" type="text"
+               placeholder="e.g. /data/fortran/src  or  /data/fortran/file.f90"
+               autocomplete="off" spellcheck="false">
+        <button id="health-btn" class="action-btn">Analyse</button>
+      </div>
+      <div id="health-status" class="status-line"></div>
+      <div id="health-results"></div>
+    </div>
   </div>
 
   <script>
     "use strict";
 
     const CODE_PREVIEW_LINES = 15;
+
+    // ── Tab switching ────────────────────────────────────────────────────────
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      });
+    });
 
     // ── DOM helpers ──────────────────────────────────────────────────────────
 
@@ -299,6 +476,7 @@
         for (const [k, v] of Object.entries(props)) {
           if (k === "class")        e.className = v;
           else if (k === "text")    e.textContent = v;
+          else if (k === "html")    e.innerHTML = v;
           else if (k === "style")   Object.assign(e.style, v);
           else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
           else                      e.setAttribute(k, v);
@@ -311,25 +489,38 @@
       return e;
     }
 
+    function setStatus(statusEl, type, content) {
+      statusEl.className = "status-line " + type;
+      statusEl.innerHTML = "";
+      if (content) statusEl.appendChild(
+        typeof content === "string" ? document.createTextNode(content) : content
+      );
+    }
+
+    function spinner(text) {
+      const wrap = el("span");
+      wrap.appendChild(el("span", { class: "spinner" }));
+      wrap.appendChild(document.createTextNode(text));
+      return wrap;
+    }
+
+    // ── Search ───────────────────────────────────────────────────────────────
+
     function scoreColor(s) {
-      // cosine similarity: ≥0.75 green, ≥0.60 yellow, below red
       if (s >= 0.75) return "var(--green)";
       if (s >= 0.60) return "var(--yellow)";
       return "var(--red)";
     }
 
-    // ── Card builder ─────────────────────────────────────────────────────────
-
-    function buildCard(r) {
+    function buildSearchCard(r) {
       const codeLines = (r.raw_code || "").split("\n");
       const preview   = codeLines.slice(0, CODE_PREVIEW_LINES);
       const overflow  = codeLines.slice(CODE_PREVIEW_LINES);
 
-      // Header
       const header = el("div", { class: "card-header" },
         el("div", { class: "card-title-group" },
-          el("span", { class: "card-name",  text: r.name }),
-          el("span", { class: "card-type",  text: r.type }),
+          el("span", { class: "card-name", text: r.name }),
+          el("span", { class: "card-type", text: r.type }),
           el("span", { class: "card-loc",
             text: `${r.source_file}  ·  lines ${r.line_start}–${r.line_end}` }),
         ),
@@ -338,18 +529,15 @@
           text: r.score.toFixed(3) }),
       );
 
-      // Summary section
       const summarySection = el("div", { class: "card-section" },
         el("div", { class: "section-label", text: "Summary" }),
         el("p",   { class: "card-summary",  text: r.summary || "(no summary)" }),
       );
 
-      // Calls section
       const callsList = el("div", { class: "calls-list" });
       if (r.calls && r.calls.length > 0) {
-        for (const c of r.calls) {
+        for (const c of r.calls)
           callsList.appendChild(el("span", { class: "call-badge", text: c }));
-        }
       } else {
         callsList.appendChild(el("span", { class: "no-calls", text: "no calls to other routines" }));
       }
@@ -358,11 +546,8 @@
         callsList,
       );
 
-      // Code section
-      const preEl = el("pre", { class: "code-block", text: preview.join("\n") });
-
+      const preEl   = el("pre", { class: "code-block", text: preview.join("\n") });
       const codeWrap = el("div", { class: "code-wrap" }, preEl);
-
       if (overflow.length > 0) {
         let expanded = false;
         const btn = el("button", {
@@ -381,7 +566,6 @@
         });
         codeWrap.appendChild(btn);
       }
-
       const codeSection = el("div", { class: "card-section" },
         el("div", { class: "section-label", text: "Source" }),
         codeWrap,
@@ -390,38 +574,23 @@
       return el("div", { class: "card" }, header, summarySection, callsSection, codeSection);
     }
 
-    // ── Status helpers ───────────────────────────────────────────────────────
-
-    const statusEl  = document.getElementById("status");
-    const resultsEl = document.getElementById("results");
-
-    function setStatus(type, content) {
-      statusEl.className = type;
-      statusEl.innerHTML = "";
-      if (content) statusEl.appendChild(content);
-    }
-
-    function clearStatus() { statusEl.className = ""; statusEl.innerHTML = ""; }
-
-    // ── Search ───────────────────────────────────────────────────────────────
-
     async function runSearch() {
-      const query = document.getElementById("query").value.trim();
+      const query    = document.getElementById("query").value.trim();
+      const statusEl = document.getElementById("search-status");
+      const resultsEl = document.getElementById("search-results");
       if (!query) return;
 
       const btn = document.getElementById("search-btn");
       btn.disabled = true;
       resultsEl.innerHTML = "";
-
-      const spinner = el("span", { class: "spinner" });
-      setStatus("loading", el("span", null, spinner, `Searching for "${query}"…`));
+      setStatus(statusEl, "loading", spinner(`Searching for "${query}"…`));
 
       let data;
       try {
         const resp = await fetch("/search", {
-          method:  "POST",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ query, top: 5 }),
+          body: JSON.stringify({ query, top: 5 }),
         });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -429,37 +598,162 @@
         }
         data = await resp.json();
       } catch (e) {
-        setStatus("error", document.createTextNode(`Error: ${e.message}`));
+        setStatus(statusEl, "error", `Error: ${e.message}`);
         btn.disabled = false;
         return;
       }
 
       btn.disabled = false;
-
       const n = data.results.length;
-      if (n === 0) {
-        setStatus("info", document.createTextNode("No results found."));
-        return;
-      }
+      if (n === 0) { setStatus(statusEl, "info", "No results found."); return; }
 
-      setStatus("info", document.createTextNode(
-        `${n} result${n === 1 ? "" : "s"} for "${data.query}"`
-      ));
-
-      for (const r of data.results) {
-        resultsEl.appendChild(buildCard(r));
-      }
+      setStatus(statusEl, "info",
+        `${n} result${n === 1 ? "" : "s"} for "${data.query}"`);
+      for (const r of data.results)
+        resultsEl.appendChild(buildSearchCard(r));
     }
-
-    // ── Wiring ───────────────────────────────────────────────────────────────
 
     document.getElementById("search-btn").addEventListener("click", runSearch);
     document.getElementById("query").addEventListener("keydown", e => {
       if (e.key === "Enter") runSearch();
     });
-
-    // Focus the input on load
     document.getElementById("query").focus();
+
+    // ── Health report ────────────────────────────────────────────────────────
+
+    function flagCell(value, trueIsBad) {
+      const isBad = trueIsBad ? value : !value;
+      const cls   = isBad ? "cell-bad" : "cell-ok";
+      const text  = value
+        ? (trueIsBad ? "✗" : "✓")
+        : (trueIsBad ? "✓" : "✗");
+      return el("td", { class: cls, text });
+    }
+
+    function buildHealthTable(report) {
+      const { subroutines, summary } = report;
+      const wrap = el("div", { class: "health-table-wrap" });
+
+      const thead = el("thead", null,
+        el("tr", null,
+          el("th", { text: "Name" }),
+          el("th", { text: "File" }),
+          el("th", { text: "Lines" }),
+          el("th", { text: "Implicit None" }),
+          el("th", { text: "GOTOs" }),
+          el("th", { text: "Common Blocks" }),
+          el("th", { text: "Dead Code" }),
+          el("th", { text: "Comments" }),
+        )
+      );
+
+      const tbody = el("tbody");
+      for (const s of subroutines) {
+        const gotoText  = s.goto_count > 0 ? String(s.goto_count) : "0";
+        const gotoCls   = s.goto_count > 0 ? "cell-bad" : "cell-ok";
+        const cbText    = s.common_blocks.length > 0 ? s.common_blocks.join(", ") : "—";
+        const cbCls     = s.common_blocks.length > 0 ? "cell-bad" : "cell-ok";
+
+        tbody.appendChild(el("tr", null,
+          el("td", { class: "col-name", text: s.name }),
+          el("td", { class: "col-file", text: `${s.source_file}:${s.line_start}` }),
+          el("td", { text: String(s.line_count) }),
+          // implicit_none_missing=true is bad
+          el("td", { class: s.implicit_none_missing ? "cell-bad" : "cell-ok",
+                     text: s.implicit_none_missing ? "✗ missing" : "✓" }),
+          el("td", { class: gotoCls, text: gotoText }),
+          el("td", { class: cbCls,   text: cbText }),
+          // has_dead_code=true is bad
+          el("td", { class: s.has_dead_code ? "cell-bad" : "cell-ok",
+                     text: s.has_dead_code ? "✗" : "✓" }),
+          // no_comments=true is bad (no comments = issue)
+          el("td", { class: s.no_comments ? "cell-bad" : "cell-ok",
+                     text: s.no_comments ? "✗ none" : "✓" }),
+        ));
+      }
+
+      const tfoot = el("tfoot", null,
+        el("tr", null,
+          el("td", { text: `Total: ${summary.total}` }),
+          el("td", { text: "" }),
+          el("td", { text: "" }),
+          el("td", { text: `${summary.implicit_none_missing} missing` }),
+          el("td", { text: `${summary.has_goto} with GOTO` }),
+          el("td", { text: `${summary.has_common_blocks} with COMMON` }),
+          el("td", { text: `${summary.has_dead_code} flagged` }),
+          el("td", { text: `${summary.no_comments} undocumented` }),
+        )
+      );
+
+      wrap.appendChild(el("table", { class: "health-table" }, thead, tbody, tfoot));
+      return wrap;
+    }
+
+    function buildSummaryCards(summary) {
+      const total = summary.total;
+
+      function card(value, label, cls) {
+        return el("div", { class: `summary-card ${cls}` },
+          el("div", { class: "sc-value", text: `${value}/${total}` }),
+          el("div", { class: "sc-label", text: label }),
+        );
+      }
+
+      const wrap = el("div", { class: "health-summary" });
+      wrap.appendChild(card(summary.total,                 "total",          "neutral"));
+      wrap.appendChild(card(summary.implicit_none_missing, "no implicit none", summary.implicit_none_missing > 0 ? "bad" : "ok"));
+      wrap.appendChild(card(summary.has_goto,              "has goto",        summary.has_goto > 0 ? "bad" : "ok"));
+      wrap.appendChild(card(summary.has_common_blocks,     "common blocks",   summary.has_common_blocks > 0 ? "warn" : "ok"));
+      wrap.appendChild(card(summary.has_dead_code,         "dead code",       summary.has_dead_code > 0 ? "bad" : "ok"));
+      wrap.appendChild(card(summary.no_comments,           "undocumented",    summary.no_comments > 0 ? "warn" : "ok"));
+      wrap.appendChild(card(summary.needs_review,          "needs review",    summary.needs_review > 0 ? "bad" : "ok"));
+      return wrap;
+    }
+
+    async function runHealth() {
+      const pathVal  = document.getElementById("health-path").value.trim();
+      const statusEl = document.getElementById("health-status");
+      const resultsEl = document.getElementById("health-results");
+      if (!pathVal) return;
+
+      const btn = document.getElementById("health-btn");
+      btn.disabled = true;
+      resultsEl.innerHTML = "";
+      setStatus(statusEl, "loading", spinner("Analysing Fortran files…"));
+
+      let data;
+      try {
+        const resp = await fetch("/health", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paths: [pathVal] }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || resp.statusText);
+        }
+        data = await resp.json();
+      } catch (e) {
+        setStatus(statusEl, "error", `Error: ${e.message}`);
+        btn.disabled = false;
+        return;
+      }
+
+      btn.disabled = false;
+      const n = data.subroutines.length;
+      setStatus(statusEl, "info",
+        `${n} subroutine${n === 1 ? "" : "s"} analysed — ` +
+        `${data.summary.needs_review} need review, ` +
+        `${data.summary.needs_docs} need docs`);
+
+      resultsEl.appendChild(buildSummaryCards(data.summary));
+      resultsEl.appendChild(buildHealthTable(data));
+    }
+
+    document.getElementById("health-btn").addEventListener("click", runHealth);
+    document.getElementById("health-path").addEventListener("keydown", e => {
+      if (e.key === "Enter") runHealth();
+    });
   </script>
 </body>
 </html>

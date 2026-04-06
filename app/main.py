@@ -25,7 +25,8 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import parse_fortran  # noqa: E402
+import parse_fortran    # noqa: E402
+import health_fortran   # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -201,6 +202,11 @@ class IndexRequest(BaseModel):
     reset: bool = False
 
 
+class HealthRequest(BaseModel):
+    paths: list[str]
+    pretty: bool = False
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -255,6 +261,21 @@ def search_endpoint(req: SearchRequest):
         })
 
     return {"query": req.query, "results": results}
+
+
+@app.post("/health")
+def code_health(req: HealthRequest):
+    files = parse_fortran._collect_files(req.paths)
+    if not files:
+        raise HTTPException(status_code=400, detail="No Fortran files found in provided paths")
+    base_dir = parse_fortran._common_base(files)
+    chunks: list[dict] = []
+    for f in files:
+        chunks.extend(parse_fortran.parse_file(f, base_dir))
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No subroutines or functions parsed from provided files")
+    report = health_fortran.build_report(chunks)
+    return report
 
 
 @app.post("/index")
