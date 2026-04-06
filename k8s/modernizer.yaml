@@ -1,6 +1,3 @@
-# TODO: replace with proper container image
-# Currently uses python:3.12-slim with inline pip install at startup.
-# Next step: build a Dockerfile that COPYs app/ and scripts/ and pre-installs deps.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -31,27 +28,13 @@ spec:
     spec:
       containers:
         - name: modernizer
-          # TODO: replace with proper container image
-          image: python:3.12-slim
-          command:
-            - /bin/sh
-            - -c
-            - |
-              pip install --quiet fastapi "uvicorn[standard]" &&
-              uvicorn app.main:app --host 0.0.0.0 --port 8000
+          image: modernizer:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 8000
           envFrom:
             - configMapRef:
                 name: modernizer-config
-          workingDir: /app
-          # Scripts and app code must be present at /app.
-          # Mount points below expect the repo to be baked into the image.
-          # Until a proper image exists, use a hostPath volume pointing at the
-          # checked-out repo on the node.
-          volumeMounts:
-            - name: repo
-              mountPath: /app
           readinessProbe:
             httpGet:
               path: /health
@@ -65,11 +48,6 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
-      volumes:
-        - name: repo
-          hostPath:
-            path: /home/francis/repos/homelab-v2
-            type: Directory
 ---
 apiVersion: v1
 kind: Service
