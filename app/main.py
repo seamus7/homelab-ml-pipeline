@@ -263,6 +263,57 @@ def search_endpoint(req: SearchRequest):
     return {"query": req.query, "results": results}
 
 
+@app.get("/documentation")
+def docs_endpoint():
+    url = QDRANT_URL.rstrip("/") + f"/collections/{COLLECTION}/points/scroll"
+    all_points: list[dict] = []
+    offset = None
+    while True:
+        body: dict = {"limit": 100, "with_payload": True, "with_vector": False}
+        if offset is not None:
+            body["offset"] = offset
+        try:
+            result = _http("POST", url, body, timeout=30)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=f"Qdrant scroll failed: {exc}")
+        batch = result.get("result", {})
+        all_points.extend(batch.get("points", []))
+        offset = batch.get("next_page_offset")
+        if offset is None:
+            break
+
+    subroutines = []
+    for pt in all_points:
+        p = pt.get("payload", {})
+        subroutines.append({
+            "name":        p.get("name"),
+            "type":        p.get("type"),
+            "source_file": p.get("source_file"),
+            "line_start":  p.get("line_start"),
+            "line_end":    p.get("line_end"),
+            "summary":     p.get("summary", ""),
+            "calls":       p.get("calls", []),
+            "raw_code":    p.get("raw_code", ""),
+        })
+
+    by_file: dict[str, list[dict]] = {}
+    for sub in subroutines:
+        by_file.setdefault(sub["source_file"] or "unknown", []).append(sub)
+
+    by_file_sorted = {
+        k: sorted(v, key=lambda s: s["line_start"] or 0)
+        for k, v in sorted(by_file.items())
+    }
+
+    alphabetical = sorted(subroutines, key=lambda s: (s["name"] or "").upper())
+
+    return {
+        "total":        len(subroutines),
+        "by_file":      by_file_sorted,
+        "alphabetical": alphabetical,
+    }
+
+
 @app.post("/health")
 def code_health(req: HealthRequest):
     files = parse_fortran._collect_files(req.paths)

@@ -415,6 +415,85 @@
     .summary-card.warn .sc-value { color: var(--yellow); }
     .summary-card.ok .sc-value   { color: var(--green); }
     .summary-card.neutral .sc-value { color: var(--accent); }
+
+    /* ── Documentation tab ───────────────────────────────────────────────── */
+    .docs-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+
+    .view-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      padding: 7px 14px;
+      text-transform: uppercase;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .view-btn:hover { color: var(--text); border-color: var(--border-hi); }
+
+    .view-btn.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .docs-list { display: flex; flex-direction: column; gap: 16px; }
+
+    .file-section {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .file-section > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--surface2);
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+
+    .file-section > summary::-webkit-details-marker { display: none; }
+
+    .file-name {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .file-count {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .file-cards { display: flex; flex-direction: column; }
+
+    .file-cards .card {
+      border-radius: 0;
+      border-left: none;
+      border-right: none;
+      border-top: none;
+      animation: none;
+    }
+
+    .file-cards .card:last-child { border-bottom: none; }
   </style>
 </head>
 <body>
@@ -428,6 +507,7 @@
     <div class="tabs">
       <button class="tab-btn active" data-tab="search">Search</button>
       <button class="tab-btn"        data-tab="health">Health Report</button>
+      <button class="tab-btn"        data-tab="docs">Documentation</button>
     </div>
 
     <!-- ── Search panel ─────────────────────────────────────────────────── -->
@@ -452,6 +532,17 @@
       </div>
       <div id="health-status" class="status-line"></div>
       <div id="health-results"></div>
+    </div>
+
+    <!-- ── Docs panel ────────────────────────────────────────────────────── -->
+    <div id="tab-docs" class="tab-panel">
+      <div class="docs-toolbar">
+        <button id="docs-load-btn" class="action-btn">Load Documentation</button>
+        <button id="view-by-file"  class="view-btn active">By File</button>
+        <button id="view-az"       class="view-btn">A–Z</button>
+      </div>
+      <div id="docs-status" class="status-line"></div>
+      <div id="docs-results"></div>
     </div>
   </div>
 
@@ -757,6 +848,145 @@
     document.getElementById("health-path").addEventListener("keydown", e => {
       if (e.key === "Enter") runHealth();
     });
+
+    // ── Documentation ────────────────────────────────────────────────────────
+
+    let docsData    = null;
+    let currentView = "by-file";
+
+    function buildDocCard(sub, showFile) {
+      const codeLines = (sub.raw_code || "").split("\n");
+      const preview   = codeLines.slice(0, CODE_PREVIEW_LINES);
+      const overflow  = codeLines.slice(CODE_PREVIEW_LINES);
+
+      const locParts = [`lines ${sub.line_start}–${sub.line_end}`];
+      if (showFile) locParts.unshift(sub.source_file);
+
+      const header = el("div", { class: "card-header" },
+        el("div", { class: "card-title-group" },
+          el("span", { class: "card-name", text: sub.name }),
+          el("span", { class: "card-type", text: sub.type }),
+          el("span", { class: "card-loc",  text: locParts.join("  ·  ") }),
+        ),
+      );
+
+      const summarySection = el("div", { class: "card-section" },
+        el("div", { class: "section-label", text: "Summary" }),
+        el("p",   { class: "card-summary",  text: sub.summary || "(no summary)" }),
+      );
+
+      const callsList = el("div", { class: "calls-list" });
+      if (sub.calls && sub.calls.length > 0) {
+        for (const c of sub.calls)
+          callsList.appendChild(el("span", { class: "call-badge", text: c }));
+      } else {
+        callsList.appendChild(el("span", { class: "no-calls", text: "no calls to other routines" }));
+      }
+      const callsSection = el("div", { class: "card-section" },
+        el("div", { class: "section-label", text: "Calls" }),
+        callsList,
+      );
+
+      const preEl    = el("pre", { class: "code-block", text: preview.join("\n") });
+      const codeWrap = el("div", { class: "code-wrap" }, preEl);
+      if (overflow.length > 0) {
+        let expanded = false;
+        const btn = el("button", {
+          class: "show-more-btn",
+          text: `▼  ${overflow.length} more line${overflow.length === 1 ? "" : "s"}`,
+          onclick: () => {
+            expanded = !expanded;
+            if (expanded) {
+              preEl.textContent = codeLines.join("\n");
+              btn.textContent = "▲  show less";
+            } else {
+              preEl.textContent = preview.join("\n");
+              btn.textContent = `▼  ${overflow.length} more line${overflow.length === 1 ? "" : "s"}`;
+            }
+          },
+        });
+        codeWrap.appendChild(btn);
+      }
+      const codeSection = el("div", { class: "card-section" },
+        el("div", { class: "section-label", text: "Source" }),
+        codeWrap,
+      );
+
+      return el("div", { class: "card" }, header, summarySection, callsSection, codeSection);
+    }
+
+    function buildByFile(byFile) {
+      const list = el("div", { class: "docs-list" });
+      for (const [filename, subs] of Object.entries(byFile)) {
+        const cards = el("div", { class: "file-cards" });
+        for (const sub of subs)
+          cards.appendChild(buildDocCard(sub, false));
+
+        const section = el("details", { class: "file-section", open: "" }, null,
+          el("summary", null,
+            el("span", { class: "file-name",  text: filename }),
+            el("span", { class: "file-count",
+              text: `${subs.length} ${subs.length === 1 ? "routine" : "routines"}` }),
+          ),
+          cards,
+        );
+        list.appendChild(section);
+      }
+      return list;
+    }
+
+    function buildAZ(alphabetical) {
+      const list = el("div", { class: "docs-list" });
+      for (const sub of alphabetical)
+        list.appendChild(buildDocCard(sub, true));
+      return list;
+    }
+
+    function renderDocs(view) {
+      if (!docsData) return;
+      const resultsEl = document.getElementById("docs-results");
+      resultsEl.innerHTML = "";
+      document.getElementById("view-by-file").classList.toggle("active", view === "by-file");
+      document.getElementById("view-az").classList.toggle("active", view === "az");
+      resultsEl.appendChild(view === "by-file"
+        ? buildByFile(docsData.by_file)
+        : buildAZ(docsData.alphabetical));
+      currentView = view;
+    }
+
+    async function runDocs() {
+      const statusEl  = document.getElementById("docs-status");
+      const resultsEl = document.getElementById("docs-results");
+
+      const btn = document.getElementById("docs-load-btn");
+      btn.disabled = true;
+      resultsEl.innerHTML = "";
+      setStatus(statusEl, "loading", spinner("Loading documentation…"));
+
+      try {
+        const resp = await fetch("/documentation");
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || resp.statusText);
+        }
+        docsData = await resp.json();
+      } catch (e) {
+        setStatus(statusEl, "error", `Error: ${e.message}`);
+        btn.disabled = false;
+        return;
+      }
+
+      btn.disabled = false;
+      const n      = docsData.total;
+      const nFiles = Object.keys(docsData.by_file).length;
+      setStatus(statusEl, "info",
+        `${n} routine${n === 1 ? "" : "s"} across ${nFiles} file${nFiles === 1 ? "" : "s"}`);
+      renderDocs(currentView);
+    }
+
+    document.getElementById("docs-load-btn").addEventListener("click", runDocs);
+    document.getElementById("view-by-file").addEventListener("click", () => renderDocs("by-file"));
+    document.getElementById("view-az").addEventListener("click",       () => renderDocs("az"));
   </script>
 </body>
 </html>

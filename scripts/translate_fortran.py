@@ -56,7 +56,8 @@ def _http(method: str, url: str, body: dict | None = None, timeout: int = 120) -
 def _generate(ollama_url: str, prompt: str) -> str:
     url = ollama_url.rstrip("/") + "/api/generate"
     result = _http(
-        "POST", url,
+        "POST",
+        url,
         {"model": _GEN_MODEL, "prompt": prompt, "stream": False},
         timeout=180,
     )
@@ -69,10 +70,8 @@ def _generate(ollama_url: str, prompt: str) -> str:
 
 
 def _strip_think(text: str) -> str:
-    """Remove
-
- blocks that qwen3 models emit."""
-    return re.sub(r".*?", "", text, flags=re.DOTALL).strip()
+    """Remove <think>...</think> blocks that qwen3 models emit."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 def _clean_code(text: str) -> str:
@@ -137,6 +136,29 @@ def _resolve_source(source_file: str) -> str | None:
         return source_file
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Standalone extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_standalone(chunk: dict) -> str:
+    """
+    Return a standalone Fortran source containing only the subroutine
+    or function from chunk['raw_code'], stripped of any enclosing
+    MODULE/CONTAINS wrapper. If already standalone, return as-is.
+    """
+    code = chunk["raw_code"]
+    lines = code.splitlines()
+    # Find the first SUBROUTINE or FUNCTION declaration line
+    start = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip().upper()
+        if re.match(r"^\s*(SUBROUTINE|.*\bFUNCTION\b)", stripped):
+            start = i
+            break
+    return "\n".join(lines[start:])
 
 
 # ---------------------------------------------------------------------------
@@ -230,13 +252,13 @@ def run_fortran(chunk: dict, driver_src: str) -> dict | None:
         with open(driver_path, "w") as f:
             f.write(driver_src)
 
-        cmd = ["gfortran", "-o", runner_path, driver_path]
-        if source_path:
-            cmd.append(source_path)
+        standalone_src = _extract_standalone(chunk)
+        standalone_path = os.path.join(tmpdir, "routine.f90")
+        with open(standalone_path, "w") as f:
+            f.write(standalone_src)
+        cmd = ["gfortran", "-o", runner_path, driver_path, standalone_path]
 
-        compile_result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30
-        )
+        compile_result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if compile_result.returncode != 0:
             print(
                 f"  [compile error]\n{compile_result.stderr[:800]}",
@@ -464,7 +486,11 @@ def translate_subroutine(
             print(f"  [skip] {exc}", file=sys.stderr)
             continue
         if fortran_out is None:
-            print(f"  [skip] Fortran run failed for input {i + 1}", file=sys.stderr, flush=True)
+            print(
+                f"  [skip] Fortran run failed for input {i + 1}",
+                file=sys.stderr,
+                flush=True,
+            )
             continue
         valid_inputs.append((test_input, fortran_out))
         print(f"  Ground truth: {fortran_out}", file=sys.stderr, flush=True)
@@ -616,9 +642,7 @@ def main() -> None:
         target = args.subroutine.upper()
         chunks = [c for c in chunks if c.get("name", "").upper() == target]
         if not chunks:
-            print(
-                f"error: '{args.subroutine}' not found in input", file=sys.stderr
-            )
+            print(f"error: '{args.subroutine}' not found in input", file=sys.stderr)
             sys.exit(1)
 
     if not chunks:

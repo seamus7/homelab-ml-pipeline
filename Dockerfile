@@ -5,6 +5,9 @@ WORKDIR /modernizer
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gfortran && rm -rf /var/lib/apt/lists/*
+
 COPY app/ app/
 COPY scripts/ scripts/
 
