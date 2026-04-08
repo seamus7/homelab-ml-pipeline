@@ -359,6 +359,39 @@ def translate_to_python(chunk: dict, ollama_url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Explanation helpers
+# ---------------------------------------------------------------------------
+
+
+def explain_failure(chunk: dict, previous_src: str,
+                    diff_summary: str, ollama_url: str) -> str:
+    """One LLM call: plain-English explanation of why the translation failed."""
+    prompt = (
+        f"A Fortran-to-Python translation failed numerical verification.\n"
+        f"Subroutine: {chunk['name']}\n\n"
+        f"Python translation attempted:\n{previous_src}\n\n"
+        f"Test failures:\n{diff_summary}\n\n"
+        f"In one sentence, explain what went wrong with this translation. "
+        f"Be specific about the algorithmic or output format error."
+    )
+    return _strip_think(_generate(ollama_url, prompt)).strip()
+
+
+def explain_fix(chunk: dict, failed_src: str,
+                fixed_src: str, ollama_url: str) -> str:
+    """One LLM call: plain-English explanation of what was corrected."""
+    prompt = (
+        f"A Fortran-to-Python translation was corrected and now passes "
+        f"numerical verification.\n"
+        f"Subroutine: {chunk['name']}\n\n"
+        f"Previous (failed):\n{failed_src}\n\n"
+        f"Corrected (passing):\n{fixed_src}\n\n"
+        f"In one sentence, describe what was fixed."
+    )
+    return _strip_think(_generate(ollama_url, prompt)).strip()
+
+
+# ---------------------------------------------------------------------------
 # run_python
 # ---------------------------------------------------------------------------
 
@@ -580,19 +613,40 @@ def translate_subroutine(
             if not ok:
                 all_pass = False
 
-        history.append(
-            {
-                "iteration": iteration,
-                "python_src": python_src,
-                "results": per_input_results,
-            }
-        )
-
         passed = sum(1 for r in per_input_results if r["match"])
         print(
             f"[{name}] {passed}/{len(per_input_results)} inputs pass",
             file=sys.stderr,
             flush=True,
+        )
+
+        failures = [r for r in per_input_results if not r["match"]]
+        diff_summary = "\n".join(
+            f"Input {r['test_input']}: expected {r['fortran_out']}, "
+            f"got {r['python_out']}\nDiff:\n{r['diff']}"
+            for r in failures
+        )
+
+        # Generate explanation before appending so history[-1] is still previous iter
+        if all_pass and iteration > 1:
+            explanation = explain_fix(
+                chunk,
+                history[-1]["python_src"],
+                python_src,
+                ollama_url,
+            )
+        elif all_pass:
+            explanation = "Translation correct on first attempt."
+        else:
+            explanation = explain_failure(chunk, python_src, diff_summary, ollama_url)
+
+        history.append(
+            {
+                "iteration": iteration,
+                "python_src": python_src,
+                "results": per_input_results,
+                "explanation": explanation,
+            }
         )
 
         if all_pass:
@@ -606,16 +660,9 @@ def translate_subroutine(
                 "name": name,
                 "python_src": python_src,
                 "iterations": iteration,
+                "explanation": explanation,
                 "history": history,
             }
-
-        # Build feedback for the next iteration
-        failures = [r for r in per_input_results if not r["match"]]
-        diff_summary = "\n".join(
-            f"  Input {r['test_input']}: expected {r['fortran_out']}, got {r['python_out']}\n"
-            f"  Diff:\n{r['diff']}"
-            for r in failures
-        )
 
         print(
             f"[{name}] {len(failures)} failure(s), requesting correction...",

@@ -494,6 +494,130 @@
     }
 
     .file-cards .card:last-child { border-bottom: none; }
+
+    /* ── Translate tab ───────────────────────────────────────────────────── */
+    .tr-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .status-badge {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      border-radius: 4px;
+      padding: 3px 10px;
+    }
+
+    .badge-ok   { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+    .badge-warn { background: #2b2000;           color: var(--yellow); border: 1px solid var(--yellow); }
+    .badge-err  { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+
+    .tr-iter-count {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .copy-btn {
+      margin-left: auto;
+    }
+
+    .tr-history { margin-top: 20px; }
+
+    .tr-history > .section-label { margin-bottom: 10px; }
+
+    .iter-details {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+
+    .iter-details > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--surface2);
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .iter-details > summary::-webkit-details-marker { display: none; }
+
+    .iter-input-result {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .iter-input-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .iter-match {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--green);
+    }
+
+    .iter-diff {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--red);
+      white-space: pre-wrap;
+    }
+
+    .tr-explanation {
+      font-size: 15px;
+      font-style: italic;
+      color: var(--accent);
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+
+    .tr-explanation strong {
+      font-style: normal;
+      font-weight: 700;
+    }
+
+    .tr-max-iter-note {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-style: italic;
+      color: var(--yellow);
+      margin-bottom: 16px;
+    }
+
+    .iter-explanation {
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 8px 14px;
+      border-top: 1px solid var(--border);
+      line-height: 1.5;
+    }
+
+    .iter-explanation-ok   { color: var(--green); }
+    .iter-explanation-warn { color: var(--yellow); }
+
+    /* ── Python syntax highlighting ──────────────────────────────────────── */
+    .py-code { tab-size: 4; }
+    .py-kw  { color: #ff7b72; }
+    .py-str { color: #a5d6ff; }
+    .py-num { color: #79c0ff; }
+    .py-cmt { color: #8b949e; font-style: italic; }
   </style>
 </head>
 <body>
@@ -508,6 +632,7 @@
       <button class="tab-btn active" data-tab="search">Search</button>
       <button class="tab-btn"        data-tab="health">Health Report</button>
       <button class="tab-btn"        data-tab="docs">Documentation</button>
+      <button class="tab-btn"        data-tab="translate">Translate</button>
     </div>
 
     <!-- ── Search panel ─────────────────────────────────────────────────── -->
@@ -532,6 +657,26 @@
       </div>
       <div id="health-status" class="status-line"></div>
       <div id="health-results"></div>
+    </div>
+
+    <!-- ── Translate panel ──────────────────────────────────────────────── -->
+    <div id="tab-translate" class="tab-panel">
+      <div class="input-row">
+        <input id="tr-path" class="text-input" type="text"
+               placeholder="e.g. /data/fortran/samples/gravity_model.f"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <div class="input-row">
+        <input id="tr-name" class="text-input" type="text"
+               placeholder="Subroutine name, e.g. GRVINT"
+               autocomplete="off" spellcheck="false">
+        <input id="tr-iters" class="text-input" type="number"
+               value="5" min="1" max="10" title="Max iterations"
+               style="width: 80px; flex: none;">
+        <button id="tr-btn" class="action-btn">Translate</button>
+      </div>
+      <div id="tr-status" class="status-line"></div>
+      <div id="tr-results"></div>
     </div>
 
     <!-- ── Docs panel ────────────────────────────────────────────────────── -->
@@ -987,6 +1132,233 @@
     document.getElementById("docs-load-btn").addEventListener("click", runDocs);
     document.getElementById("view-by-file").addEventListener("click", () => renderDocs("by-file"));
     document.getElementById("view-az").addEventListener("click",       () => renderDocs("az"));
+
+    // ── Translate ────────────────────────────────────────────────────────────
+
+    function highlightPython(code) {
+      const KW = new Set([
+        'def','return','if','elif','else','for','while','in','not','and','or',
+        'import','from','True','False','None','break','continue','pass','raise',
+        'try','except','finally','with','as','class','lambda','yield','del',
+        'global','nonlocal','assert','is',
+      ]);
+
+      function esc(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
+      return code.split('\n').map(rawLine => {
+        // Find inline comment position, skipping string contents
+        let commentIdx = -1, inStr = false, strCh = '';
+        for (let i = 0; i < rawLine.length; i++) {
+          const c = rawLine[i];
+          if (inStr) { if (c === strCh && rawLine[i - 1] !== '\\') inStr = false; }
+          else if (c === '"' || c === "'") { inStr = true; strCh = c; }
+          else if (c === '#') { commentIdx = i; break; }
+        }
+        const codePart    = commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine;
+        const commentPart = commentIdx >= 0 ? rawLine.slice(commentIdx) : '';
+
+        // Single-pass tokenizer over codePart
+        let out = '', i = 0;
+        while (i < codePart.length) {
+          const c = codePart[i];
+          // String literal
+          if (c === '"' || c === "'") {
+            let j = i + 1;
+            while (j < codePart.length && (codePart[j] !== c || codePart[j - 1] === '\\')) j++;
+            if (j < codePart.length) j++;
+            out += `<span class="py-str">${esc(codePart.slice(i, j))}</span>`;
+            i = j; continue;
+          }
+          // Identifier / keyword
+          if (/[a-zA-Z_]/.test(c)) {
+            let j = i;
+            while (j < codePart.length && /\w/.test(codePart[j])) j++;
+            const word = codePart.slice(i, j);
+            out += KW.has(word)
+              ? `<span class="py-kw">${esc(word)}</span>`
+              : esc(word);
+            i = j; continue;
+          }
+          // Number
+          if (/\d/.test(c) || (c === '.' && /\d/.test(codePart[i + 1] || ''))) {
+            let j = i;
+            while (j < codePart.length && /[\d.eE+\-]/.test(codePart[j])) j++;
+            out += `<span class="py-num">${esc(codePart.slice(i, j))}</span>`;
+            i = j; continue;
+          }
+          out += esc(c);
+          i++;
+        }
+        if (commentPart) out += `<span class="py-cmt">${esc(commentPart)}</span>`;
+        return out;
+      }).join('\n');
+    }
+
+    function buildTranslateResult(data) {
+      const wrap = el("div");
+
+      // Resolve python_src — present on success, or take last iteration's
+      const pythonSrc = data.python_src
+        || (data.history && data.history.length
+            ? data.history[data.history.length - 1].python_src
+            : null);
+
+      // ── Header row ────────────────────────────────────────────────────────
+      const badgeText = {
+        success:               'SUCCESS',
+        max_iterations_reached:'MAX ITERATIONS REACHED',
+        compile_error:         'COMPILE ERROR',
+        error:                 'ERROR',
+      }[data.status] || data.status.toUpperCase();
+
+      const badgeCls = data.status === 'success' ? 'badge-ok'
+                     : data.status === 'max_iterations_reached' ? 'badge-warn'
+                     : 'badge-err';
+
+      const headerChildren = [
+        el("span", { class: `status-badge ${badgeCls}`, text: badgeText }),
+      ];
+      if (data.iterations != null)
+        headerChildren.push(
+          el("span", { class: "tr-iter-count",
+            text: `Completed in ${data.iterations} iteration(s)` })
+        );
+      if (pythonSrc) {
+        const copyBtn = el("button", { class: "action-btn copy-btn", text: "Copy Python" });
+        copyBtn.addEventListener("click", () => {
+          navigator.clipboard.writeText(pythonSrc).then(() => {
+            copyBtn.textContent = "Copied!";
+            setTimeout(() => { copyBtn.textContent = "Copy Python"; }, 1500);
+          });
+        });
+        headerChildren.push(copyBtn);
+      }
+      wrap.appendChild(el("div", { class: "tr-header" }, ...headerChildren));
+
+      // ── Top-level explanation (success) ───────────────────────────────────
+      if (data.explanation) {
+        const expEl = el("p", { class: "tr-explanation" });
+        expEl.appendChild(el("strong", { text: "Summary: " }));
+        expEl.appendChild(document.createTextNode(data.explanation));
+        wrap.appendChild(expEl);
+      }
+
+      // ── Max iterations note ───────────────────────────────────────────────
+      if (data.status === "max_iterations_reached")
+        wrap.appendChild(el("p", { class: "tr-max-iter-note",
+          text: "Maximum iterations reached. Review the iteration history to understand where the translation diverged." }));
+
+      // ── Error message ─────────────────────────────────────────────────────
+      if (data.message)
+        wrap.appendChild(el("p", { style: { color: "var(--red)", fontFamily: "var(--mono)", fontSize: "13px", marginBottom: "12px" }, text: data.message }));
+
+      // ── Generated Python code ─────────────────────────────────────────────
+      if (pythonSrc) {
+        const preEl = el("pre", { class: "code-block py-code" });
+        preEl.innerHTML = highlightPython(pythonSrc);
+        wrap.appendChild(el("div", { class: "card" },
+          el("div", { class: "card-section" },
+            el("div", { class: "section-label", text: "Generated Python" }),
+            preEl,
+          )
+        ));
+      }
+
+      // ── Iteration history ─────────────────────────────────────────────────
+      if (data.history && data.history.length > 0) {
+        const histWrap = el("div", { class: "tr-history" });
+        histWrap.appendChild(el("div", { class: "section-label", text: "Iteration History" }));
+
+        for (const iter of data.history) {
+          const passed = iter.results.filter(r => r.match).length;
+          const total  = iter.results.length;
+          const allOk  = passed === total;
+
+          const details = el("details", { class: "iter-details" });
+          const sumEl   = el("summary", { class: "iter-summary" });
+          sumEl.appendChild(
+            el("span", { text: `Iteration ${iter.iteration} — ${passed}/${total} inputs pass` })
+          );
+          sumEl.appendChild(
+            el("span", { class: allOk ? "status-badge badge-ok" : "status-badge badge-warn",
+              text: allOk ? "ALL PASS" : "FAIL" })
+          );
+          details.appendChild(sumEl);
+
+          if (iter.explanation) {
+            const prefix = allOk ? "✓ " : "↻ ";
+            details.appendChild(el("div", {
+              class: allOk ? "iter-explanation iter-explanation-ok"
+                           : "iter-explanation iter-explanation-warn",
+              text: prefix + iter.explanation,
+            }));
+          }
+
+          for (const r of iter.results) {
+            const inputLabel = JSON.stringify(r.test_input);
+            const resultDiv  = el("div", { class: "iter-input-result" },
+              el("div", { class: "iter-input-label", text: `Input: ${inputLabel}` }),
+              r.match
+                ? el("div", { class: "iter-match", text: `✓  Fortran: ${JSON.stringify(r.fortran_out)}` })
+                : el("div", { class: "iter-diff",
+                    text: `✗  expected ${JSON.stringify(r.fortran_out)}  got ${JSON.stringify(r.python_out)}\n${r.diff}` }),
+            );
+            details.appendChild(resultDiv);
+          }
+          histWrap.appendChild(details);
+        }
+        wrap.appendChild(histWrap);
+      }
+
+      return wrap;
+    }
+
+    async function runTranslate() {
+      const pathVal  = document.getElementById("tr-path").value.trim();
+      const nameVal  = document.getElementById("tr-name").value.trim();
+      const itersVal = parseInt(document.getElementById("tr-iters").value, 10) || 5;
+      const statusEl  = document.getElementById("tr-status");
+      const resultsEl = document.getElementById("tr-results");
+
+      if (!pathVal || !nameVal) return;
+
+      const btn = document.getElementById("tr-btn");
+      btn.disabled = true;
+      resultsEl.innerHTML = "";
+      setStatus(statusEl, "loading",
+        spinner(`Translating ${nameVal}… this may take several minutes`));
+
+      let data;
+      try {
+        const resp = await fetch("/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: pathVal, subroutine: nameVal, max_iterations: itersVal }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || resp.statusText);
+        }
+        data = await resp.json();
+      } catch (e) {
+        setStatus(statusEl, "error", `Error: ${e.message}`);
+        btn.disabled = false;
+        return;
+      }
+
+      btn.disabled = false;
+      const iters = data.iterations ?? (data.history ? data.history.length : "?");
+      setStatus(statusEl, "info",
+        `${data.status === "success" ? "Translation verified" : "Translation complete"} — status: ${data.status}`);
+      resultsEl.appendChild(buildTranslateResult(data));
+    }
+
+    document.getElementById("tr-btn").addEventListener("click", runTranslate);
+    document.getElementById("tr-name").addEventListener("keydown", e => {
+      if (e.key === "Enter") runTranslate();
+    });
   </script>
 </body>
 </html>

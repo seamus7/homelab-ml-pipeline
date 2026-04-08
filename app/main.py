@@ -25,8 +25,9 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import parse_fortran    # noqa: E402
-import health_fortran   # noqa: E402
+import parse_fortran      # noqa: E402
+import health_fortran     # noqa: E402
+import translate_fortran  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -207,6 +208,12 @@ class HealthRequest(BaseModel):
     pretty: bool = False
 
 
+class TranslateRequest(BaseModel):
+    path: str
+    subroutine: str
+    max_iterations: int = 5
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -327,6 +334,36 @@ def code_health(req: HealthRequest):
         raise HTTPException(status_code=400, detail="No subroutines or functions parsed from provided files")
     report = health_fortran.build_report(chunks)
     return report
+
+
+@app.post("/translate")
+def translate_endpoint(req: TranslateRequest):
+    p = Path(req.path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {req.path}")
+
+    base_dir = parse_fortran._common_base([p])
+    chunks = parse_fortran.parse_file(p, base_dir)
+
+    target = req.subroutine.upper()
+    chunk = next((c for c in chunks if c["name"].upper() == target), None)
+    if chunk is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Subroutine '{req.subroutine}' not found in {req.path}",
+        )
+
+    health = health_fortran.analyse(chunk)
+    if health["common_blocks"]:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Subroutine uses COMMON blocks — not supported in demo mode. "
+                "Subroutines with empty common_blocks are supported."
+            ),
+        )
+
+    return translate_fortran.translate_subroutine(chunk, OLLAMA_URL, req.max_iterations)
 
 
 @app.post("/index")
