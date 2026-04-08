@@ -69,8 +69,10 @@ def _generate(ollama_url: str, prompt: str) -> str:
 
 
 def _strip_think(text: str) -> str:
-    """Remove <think>...</think> blocks that qwen3 models emit."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    """Remove
+
+ blocks that qwen3 models emit."""
+    return re.sub(r".*?", "", text, flags=re.DOTALL).strip()
 
 
 def _clean_code(text: str) -> str:
@@ -180,23 +182,34 @@ def generate_fortran_driver(chunk: dict, test_input: dict, ollama_url: str) -> s
             "    WRITE(*,'(A,G30.15)') 'result=', <result_variable>\n"
         )
 
-    use_note = (
-        f"The subroutine/function lives in source file '{source_file}'. "
-        "If it is declared inside a MODULE, add the appropriate USE statement "
-        "in the PROGRAM."
-    )
-
     prompt = (
-        f"Generate a complete compilable Fortran PROGRAM to test this subroutine/function.\n\n"
+        f"Generate a complete compilable Fortran PROGRAM to test this "
+        f"subroutine/function.\n\n"
         f"Fortran source:\n{chunk['raw_code']}\n\n"
         f"Test inputs to assign: {json.dumps(test_input)}\n\n"
         f"Requirements:\n"
-        f"1. Declare all variables with correct Fortran types.\n"
+        f"1. Declare all variables with correct Fortran types matching "
+        f"the source.\n"
         f"2. Assign the test input values listed above.\n"
-        f"3. Call the subroutine/function.\n"
+        f"3. Call the subroutine/function directly by name.\n"
         f"4. {output_instructions}"
-        f"5. {use_note}\n\n"
-        f"Return only the complete Fortran PROGRAM source, no preamble, no markdown fences."
+        f"5. IMPORTANT: Do NOT use any USE or MODULE statements. "
+        f"The subroutine will be compiled and linked directly from its "
+        f"source file.\n"
+        f"6. Do not INCLUDE or IMPORT anything — just declare variables "
+        f"and call the routine.\n"
+    )
+
+    if is_function:
+        prompt += (
+            "\nSince this is a FUNCTION (not a SUBROUTINE), declare an "
+            "explicit interface block or declare the function return type "
+            "before calling it.\n"
+        )
+
+    prompt += (
+        "\nReturn only the complete Fortran PROGRAM source, "
+        "no preamble, no markdown fences."
     )
     return _clean_code(_generate(ollama_url, prompt))
 
