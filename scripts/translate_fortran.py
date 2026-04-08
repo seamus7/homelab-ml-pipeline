@@ -139,6 +139,43 @@ def _resolve_source(source_file: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Driver comment cleaner
+# ---------------------------------------------------------------------------
+
+
+def _fix_driver_comments(src: str) -> str:
+    """Replace fixed-format C comments with free-format ! comments."""
+    lines = []
+    for line in src.splitlines():
+        if line and line[0].upper() == "C" and (len(line) == 1 or not line[1].isdigit()):
+            lines.append("!" + line[1:])
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Output name extraction
+# ---------------------------------------------------------------------------
+
+
+def _get_output_names(chunk: dict) -> list[str]:
+    """Extract INTENT(OUT) and INTENT(INOUT) variable names from raw_code."""
+    pattern = re.compile(
+        r"INTENT\s*\(\s*(OUT|INOUT)\s*\)\s*::\s*([^\n]+)",
+        re.IGNORECASE,
+    )
+    names = []
+    for m in pattern.finditer(chunk["raw_code"]):
+        vars_str = m.group(2)
+        for var in vars_str.split(","):
+            name = var.strip().split("(")[0].strip()  # strip array dims
+            if name:
+                names.append(name.upper())
+    return names
+
+
+# ---------------------------------------------------------------------------
 # Standalone extraction
 # ---------------------------------------------------------------------------
 
@@ -246,14 +283,15 @@ def run_fortran(chunk: dict, driver_src: str) -> dict | None:
     source_path = _resolve_source(chunk.get("source_file", ""))
     tmpdir = tempfile.mkdtemp(prefix="fort_translate_")
     try:
+        src_ext = Path(chunk.get("source_file", "routine.f90")).suffix or ".f90"
         driver_path = os.path.join(tmpdir, "driver.f90")
         runner_path = os.path.join(tmpdir, "runner")
 
         with open(driver_path, "w") as f:
-            f.write(driver_src)
+            f.write(_fix_driver_comments(driver_src))
 
         standalone_src = _extract_standalone(chunk)
-        standalone_path = os.path.join(tmpdir, "routine.f90")
+        standalone_path = os.path.join(tmpdir, f"routine{src_ext}")
         with open(standalone_path, "w") as f:
             f.write(standalone_src)
         cmd = ["gfortran", "-o", runner_path, driver_path, standalone_path]
@@ -312,7 +350,9 @@ def translate_to_python(chunk: dict, ollama_url: str) -> str:
         "Use only the Python standard library and math module.\n"
         "Preserve the algorithm exactly — do not simplify or optimize.\n"
         "Return only the Python function definition, no preamble,\n"
-        "no markdown fences.\n\n"
+        "no markdown fences.\n"
+        "If this is a subroutine (not a function), return all INTENT(OUT) "
+        "and INTENT(INOUT) variables as a tuple in declaration order.\n\n"
         f"{chunk['raw_code']}"
     )
     return _clean_code(_generate(ollama_url, prompt))
@@ -388,14 +428,24 @@ def run_python(python_src: str, test_input: dict, chunk: dict) -> dict | None:
         return None
 
     ret = result_container[0]
+    is_function = chunk.get("type", "").lower() == "function"
+
     if ret is None:
         return {}
-    if isinstance(ret, (int, float)):
-        return {"result": float(ret)}
     if isinstance(ret, dict):
         return ret
+    if is_function:
+        if isinstance(ret, (int, float)):
+            return {"result": float(ret)}
+        return {"result": ret}
+    # Subroutine: map return value(s) to INTENT(OUT) variable names
+    out_names = _get_output_names(chunk)
     if isinstance(ret, (tuple, list)):
+        if out_names and len(ret) == len(out_names):
+            return {name: v for name, v in zip(out_names, ret)}
         return {f"out_{i}": v for i, v in enumerate(ret)}
+    if isinstance(ret, (int, float)) and len(out_names) == 1:
+        return {out_names[0]: float(ret)}
     return {"result": ret}
 
 
