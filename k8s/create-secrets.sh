@@ -12,6 +12,7 @@ fi
 # Load only the variables we need
 POSTGRES_PASSWORD=$(grep -E '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 RUNNER_TOKEN=$(grep -E '^RUNNER_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
+GITEA_API_TOKEN=$(grep -E '^GITEA_API_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
 
 if [[ -z "$POSTGRES_PASSWORD" ]]; then
   echo "Error: POSTGRES_PASSWORD not found in .env" >&2
@@ -20,6 +21,11 @@ fi
 
 if [[ -z "$RUNNER_TOKEN" ]]; then
   echo "Error: RUNNER_TOKEN not found in .env" >&2
+  exit 1
+fi
+
+if [[ -z "$GITEA_API_TOKEN" ]]; then
+  echo "Error: GITEA_API_TOKEN not found in .env" >&2
   exit 1
 fi
 
@@ -36,3 +42,9 @@ kubectl create secret generic runner-secret \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "runner-secret applied."
+
+kubectl create secret generic gitea-token \
+  --from-literal=token="${GITEA_API_TOKEN}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+echo "gitea-token secret applied."

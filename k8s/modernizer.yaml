@@ -8,6 +8,9 @@ data:
   OLLAMA_URL: "http://ollama:11434"
   QDRANT_URL: "http://qdrant:6333"
   COLLECTION: "fortran_subroutines"
+  GITEA_URL: "http://gitea:3000"
+  GITEA_REPO_OWNER: "admin"
+  GITEA_REPO_NAME: "fortran-modernizer"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -35,6 +38,12 @@ spec:
           envFrom:
             - configMapRef:
                 name: modernizer-config
+          env:
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-token
+                  key: token
           readinessProbe:
             httpGet:
               path: /health

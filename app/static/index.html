@@ -612,6 +612,30 @@
     .iter-explanation-ok   { color: var(--green); }
     .iter-explanation-warn { color: var(--yellow); }
 
+    /* ── PR button / link ────────────────────────────────────────────────── */
+    .pr-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .pr-link {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--green);
+      text-decoration: none;
+    }
+
+    .pr-link:hover { text-decoration: underline; }
+
+    .pr-error {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--red);
+    }
+
     /* ── Python syntax highlighting ──────────────────────────────────────── */
     .py-code { tab-size: 4; }
     .py-kw  { color: #ff7b72; }
@@ -1196,7 +1220,7 @@
       }).join('\n');
     }
 
-    function buildTranslateResult(data) {
+    function buildTranslateResult(data, reqCtx) {
       const wrap = el("div");
 
       // Resolve python_src — present on success, or take last iteration's
@@ -1236,6 +1260,62 @@
         headerChildren.push(copyBtn);
       }
       wrap.appendChild(el("div", { class: "tr-header" }, ...headerChildren));
+
+      // ── Open PR on Gitea (success only) ───────────────────────────────────
+      if (data.status === "success" && pythonSrc && reqCtx) {
+        const prRow  = el("div", { class: "pr-row" });
+        const prBtn  = el("button", { class: "action-btn", text: "Open PR on Gitea" });
+        const prInfo = el("span");
+        prRow.appendChild(prBtn);
+        prRow.appendChild(prInfo);
+
+        prBtn.addEventListener("click", async () => {
+          prBtn.disabled = true;
+          prBtn.textContent = "Opening PR…";
+          prInfo.textContent = "";
+          prInfo.className = "";
+
+          // Derive relative source_file by stripping /data/fortran/ mount prefix
+          const sourceFile = reqCtx.path.replace(/^\/data\/fortran\//, "");
+
+          let prData;
+          try {
+            const resp = await fetch("/translate/pr", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                python_src:      pythonSrc,
+                subroutine_name: reqCtx.subroutine,
+                source_file:     sourceFile,
+                iterations:      data.iterations ?? (data.history ? data.history.length : 1),
+                explanation:     data.explanation || "",
+              }),
+            });
+            if (!resp.ok) {
+              const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+              throw new Error(err.detail || resp.statusText);
+            }
+            prData = await resp.json();
+          } catch (e) {
+            prBtn.style.display = "none";
+            prInfo.className = "pr-error";
+            prInfo.textContent = `PR failed: ${e.message}`;
+            return;
+          }
+
+          prBtn.style.display = "none";
+          const link = el("a", {
+            class: "pr-link",
+            href: prData.pr_url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            text: `✓ PR opened: ${prData.pr_url}`,
+          });
+          prInfo.appendChild(link);
+        });
+
+        wrap.appendChild(prRow);
+      }
 
       // ── Top-level explanation (success) ───────────────────────────────────
       if (data.explanation) {
@@ -1352,7 +1432,7 @@
       const iters = data.iterations ?? (data.history ? data.history.length : "?");
       setStatus(statusEl, "info",
         `${data.status === "success" ? "Translation verified" : "Translation complete"} — status: ${data.status}`);
-      resultsEl.appendChild(buildTranslateResult(data));
+      resultsEl.appendChild(buildTranslateResult(data, { path: pathVal, subroutine: nameVal }));
     }
 
     document.getElementById("tr-btn").addEventListener("click", runTranslate);
