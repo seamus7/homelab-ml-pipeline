@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -232,6 +232,11 @@ class PRRequest(BaseModel):
     explanation: str = ""
 
 
+class AskRequest(BaseModel):
+    query: str
+    top: int = 5
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -442,6 +447,124 @@ def translate_pr_endpoint(req: PRRequest):
         raise HTTPException(status_code=502, detail=f"create PR failed: {exc}")
 
     return {"status": "ok", "pr_url": pr.get("html_url", "")}
+
+
+@app.post("/ask")
+def ask_endpoint(req: AskRequest):
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query must not be empty")
+
+    try:
+        vector = _embed(OLLAMA_URL, req.query)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"Embedding failed: {exc}")
+
+    qdrant_url = QDRANT_URL.rstrip("/") + f"/collections/{COLLECTION}/points/search"
+    try:
+        result = _http("POST", qdrant_url,
+                       {"vector": vector, "limit": req.top, "with_payload": True}, timeout=30)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"Qdrant search failed: {exc}")
+
+    sources = []
+    for hit in result.get("result", []):
+        p = hit.get("payload", {})
+        sources.append({
+            "name":        p.get("name"),
+            "type":        p.get("type"),
+            "source_file": p.get("source_file"),
+            "line_start":  p.get("line_start"),
+            "line_end":    p.get("line_end"),
+            "summary":     p.get("summary", ""),
+            "raw_code":    p.get("raw_code", ""),
+        })
+
+    context = "\n".join(
+        f"Subroutine: {r['name']} ({r['type']}) in {r['source_file']} "
+        f"lines {r['line_start']}-{r['line_end']}\n"
+        f"Summary: {r['summary']}\n"
+        f"Code:\n{r['raw_code']}\n"
+        for r in sources
+    )
+
+    prompt = (
+        "You are an expert in Fortran scientific computing analyzing a geodesy codebase. "
+        "Answer the following question based only on the provided subroutine context. "
+        "Be specific and technical. Cite which subroutines you are drawing from by name. "
+        "If the answer cannot be determined from the provided context, say so explicitly "
+        "rather than guessing.\n\n"
+        f"Question: {req.query}\n\n"
+        f"Relevant subroutines from the codebase:\n{context}"
+    )
+
+    def generate():
+        ollama_url = OLLAMA_URL.rstrip("/") + "/api/generate"
+        body = json.dumps({"model": _GEN_MODEL, "prompt": prompt, "stream": True}).encode()
+        req_obj = urllib.request.Request(
+            ollama_url, data=body,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        in_think = False
+        buf = ""
+        try:
+            with urllib.request.urlopen(req_obj, timeout=300) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    buf += obj.get("response", "")
+                    done = obj.get("done", False)
+
+                    # Strip <think>...</think> blocks as tokens arrive
+                    while True:
+                        if not in_think:
+                            idx = buf.find("<think>")
+                            if idx == -1:
+                                # Emit all but a possible partial tag at the tail
+                                safe = len(buf)
+                                for plen in range(min(7, len(buf)), 0, -1):
+                                    if "<think>"[:plen] == buf[-plen:]:
+                                        safe = len(buf) - plen
+                                        break
+                                if safe > 0:
+                                    yield buf[:safe]
+                                    buf = buf[safe:]
+                                break
+                            else:
+                                if idx > 0:
+                                    yield buf[:idx]
+                                buf = buf[idx + 7:]
+                                in_think = True
+                        else:
+                            idx = buf.find("</think>")
+                            if idx == -1:
+                                # Discard think content, keep possible partial close tag
+                                safe_discard = len(buf)
+                                for plen in range(min(8, len(buf)), 0, -1):
+                                    if "</think>"[:plen] == buf[-plen:]:
+                                        safe_discard = len(buf) - plen
+                                        break
+                                buf = buf[safe_discard:]
+                                break
+                            else:
+                                buf = buf[idx + 8:]
+                                in_think = False
+
+                    if done:
+                        if not in_think and buf:
+                            yield buf
+                        break
+        except Exception as exc:
+            yield f"\n[Stream error: {exc}]"
+
+        yield "\n\n__SOURCES__\n" + json.dumps(sources)
+
+    return StreamingResponse(generate(), media_type="text/plain")
 
 
 @app.post("/index")

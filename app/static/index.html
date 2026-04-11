@@ -636,6 +636,85 @@
       color: var(--red);
     }
 
+    /* ── Ask tab ─────────────────────────────────────────────────────────── */
+    .ask-textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      padding: 10px 14px;
+      outline: none;
+      resize: vertical;
+      min-height: 80px;
+      transition: border-color 0.15s;
+    }
+
+    .ask-textarea:focus { border-color: var(--border-hi); }
+    .ask-textarea::placeholder { color: var(--text-muted); }
+
+    .ask-answer {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.8;
+      padding: 20px 24px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 40px;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .ask-sources { margin-top: 8px; }
+
+    .ask-sources-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .ask-source-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+    }
+
+    .ask-source-card:last-child { margin-bottom: 0; }
+
+    .ask-source-name {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 2px;
+    }
+
+    .ask-source-loc {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .ask-source-summary {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.55;
+    }
+
     /* ── Python syntax highlighting ──────────────────────────────────────── */
     .py-code { tab-size: 4; }
     .py-kw  { color: #ff7b72; }
@@ -657,6 +736,7 @@
       <button class="tab-btn"        data-tab="health">Health Report</button>
       <button class="tab-btn"        data-tab="docs">Documentation</button>
       <button class="tab-btn"        data-tab="translate">Translate</button>
+      <button class="tab-btn"        data-tab="ask">Ask</button>
     </div>
 
     <!-- ── Search panel ─────────────────────────────────────────────────── -->
@@ -712,6 +792,21 @@
       </div>
       <div id="docs-status" class="status-line"></div>
       <div id="docs-results"></div>
+    </div>
+
+    <!-- ── Ask panel ────────────────────────────────────────────────────────── -->
+    <div id="tab-ask" class="tab-panel">
+      <div style="margin-bottom: 8px;">
+        <textarea id="ask-query" class="ask-textarea"
+                  placeholder="e.g. How does this codebase handle coordinate transformations between reference frames?"
+                  spellcheck="false"></textarea>
+      </div>
+      <div class="input-row" style="margin-bottom: 20px;">
+        <button id="ask-btn" class="action-btn">Ask</button>
+      </div>
+      <div id="ask-status" class="status-line"></div>
+      <div id="ask-answer" class="ask-answer"></div>
+      <div id="ask-sources" class="ask-sources"></div>
     </div>
   </div>
 
@@ -1438,6 +1533,117 @@
     document.getElementById("tr-btn").addEventListener("click", runTranslate);
     document.getElementById("tr-name").addEventListener("keydown", e => {
       if (e.key === "Enter") runTranslate();
+    });
+
+    // ── Ask (RAG streaming) ──────────────────────────────────────────────────
+
+    const SOURCES_SENTINEL = "\n\n__SOURCES__\n";
+
+    function renderAskSources(sources, container) {
+      container.innerHTML = "";
+      if (!sources || sources.length === 0) return;
+      container.appendChild(el("div", { class: "ask-sources-label", text: "Sources" }));
+      for (const s of sources) {
+        container.appendChild(
+          el("div", { class: "ask-source-card" },
+            el("div", { class: "ask-source-name", text: s.name }),
+            el("div", { class: "ask-source-loc",
+              text: `${s.source_file}  ·  lines ${s.line_start}–${s.line_end}` }),
+            el("div", { class: "ask-source-summary", text: s.summary || "(no summary)" }),
+          )
+        );
+      }
+    }
+
+    async function runAsk() {
+      const query     = document.getElementById("ask-query").value.trim();
+      const statusEl  = document.getElementById("ask-status");
+      const answerEl  = document.getElementById("ask-answer");
+      const sourcesEl = document.getElementById("ask-sources");
+      if (!query) return;
+
+      const btn = document.getElementById("ask-btn");
+      btn.disabled = true;
+      answerEl.style.display = "none";
+      answerEl.textContent = "";
+      sourcesEl.innerHTML = "";
+      setStatus(statusEl, "loading", spinner("Searching context and generating answer…"));
+
+      let resp;
+      try {
+        resp = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, top: 5 }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || resp.statusText);
+        }
+      } catch (e) {
+        setStatus(statusEl, "error", `Error: ${e.message}`);
+        btn.disabled = false;
+        return;
+      }
+
+      setStatus(statusEl, "loading", spinner("Streaming answer…"));
+      answerEl.style.display = "block";
+
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let sourcesRendered = false;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          const sidx = buf.indexOf(SOURCES_SENTINEL);
+          if (sidx !== -1) {
+            answerEl.textContent = buf.slice(0, sidx);
+            const sourcesJson = buf.slice(sidx + SOURCES_SENTINEL.length);
+            if (sourcesJson) {
+              try { renderAskSources(JSON.parse(sourcesJson), sourcesEl); } catch (_) {}
+            }
+            sourcesRendered = true;
+            break;
+          }
+
+          // Emit everything except the last (sentinel.length - 1) chars in case
+          // the sentinel straddles a chunk boundary
+          const safeEnd = Math.max(0, buf.length - SOURCES_SENTINEL.length + 1);
+          answerEl.textContent = buf.slice(0, safeEnd);
+          answerEl.scrollIntoView({ block: "end", behavior: "smooth" });
+        }
+      } catch (e) {
+        setStatus(statusEl, "error", `Stream error: ${e.message}`);
+        btn.disabled = false;
+        return;
+      }
+
+      // Flush: if sentinel never appeared, display whatever we have
+      if (!sourcesRendered) {
+        const sidx = buf.indexOf(SOURCES_SENTINEL);
+        if (sidx !== -1) {
+          answerEl.textContent = buf.slice(0, sidx);
+          try { renderAskSources(JSON.parse(buf.slice(sidx + SOURCES_SENTINEL.length)), sourcesEl); } catch (_) {}
+        } else {
+          answerEl.textContent = buf;
+        }
+      }
+
+      btn.disabled = false;
+      setStatus(statusEl, "info", "Done");
+    }
+
+    document.getElementById("ask-btn").addEventListener("click", runAsk);
+    document.getElementById("ask-query").addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
+        e.preventDefault();
+        runAsk();
+      }
     });
   </script>
 </body>
