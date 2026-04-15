@@ -1,0 +1,102 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: default
+data:
+  config.yaml: |
+    model_list:
+      - model_name: default
+        litellm_params:
+          model: ollama/qwen3-coder-next
+          api_base: http://ollama:11434
+
+      - model_name: sonnet
+        litellm_params:
+          model: openrouter/anthropic/claude-sonnet-4-6
+          api_key: os.environ/OPENROUTER_API_KEY
+
+      - model_name: glm
+        litellm_params:
+          model: openrouter/z-ai/glm-5.1
+          api_key: os.environ/OPENROUTER_API_KEY
+
+  INFERENCE_MODEL: "default"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: default
+  labels:
+    app: litellm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: litellm
+  template:
+    metadata:
+      labels:
+        app: litellm
+    spec:
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-latest
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--config",
+              "/app/config.yaml",
+              "--port",
+              "4000",
+              "--num_workers",
+              "1",
+            ]
+          ports:
+            - containerPort: 4000
+          env:
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openrouter-secret
+                  key: api_key
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 5
+          volumeMounts:
+            - name: litellm-config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "2Gi"
+      volumes:
+        - name: litellm-config
+          configMap:
+            name: litellm-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: litellm
+  ports:
+    - port: 4000
+      targetPort: 4000

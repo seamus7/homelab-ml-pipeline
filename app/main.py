@@ -487,12 +487,27 @@ def ask_endpoint(req: AskRequest):
         for r in sources
     )
 
+    col_info_url = QDRANT_URL.rstrip("/") + f"/collections/{COLLECTION}"
+    try:
+        col_info = _http("GET", col_info_url, timeout=10)
+        total_count = col_info.get("result", {}).get("points_count", "unknown")
+    except RuntimeError:
+        total_count = "unknown"
+
     prompt = (
+        f"You have been given {len(sources)} subroutines as context out of "
+        f"{total_count} total subroutines indexed in this codebase.\n\n"
         "You are an expert in Fortran scientific computing analyzing a geodesy codebase. "
         "Answer the following question based only on the provided subroutine context. "
         "Be specific and technical. Cite which subroutines you are drawing from by name. "
         "If the answer cannot be determined from the provided context, say so explicitly "
-        "rather than guessing.\n\n"
+        f"rather than guessing.\n\n"
+        f"If the question requires knowledge of the full codebase beyond the {len(sources)} "
+        f"subroutines provided — for example questions about totals, counts, the most/least "
+        f"of something, or anything that requires seeing all subroutines — explicitly state: "
+        f"'I can only see {len(sources)} of {total_count} subroutines in this context. "
+        f"For a complete answer, the full codebase would need to be queried.' "
+        f"Then answer as best you can from the available context.\n\n"
         f"Question: {req.query}\n\n"
         f"Relevant subroutines from the codebase:\n{context}"
     )

@@ -11,6 +11,8 @@ data:
   GITEA_URL: "http://gitea:3000"
   GITEA_REPO_OWNER: "admin"
   GITEA_REPO_NAME: "fortran-modernizer"
+  INFERENCE_URL: "http://litellm:4000"
+  INFERENCE_MODEL: "default"
 ---
 apiVersion: apps/v1
 kind: Deployment

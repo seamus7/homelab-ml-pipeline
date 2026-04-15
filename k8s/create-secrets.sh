@@ -13,6 +13,7 @@ fi
 POSTGRES_PASSWORD=$(grep -E '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 RUNNER_TOKEN=$(grep -E '^RUNNER_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
 GITEA_API_TOKEN=$(grep -E '^GITEA_API_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
+OPENROUTER_API_KEY=$(grep -E '^OPENROUTER_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
 
 if [[ -z "$POSTGRES_PASSWORD" ]]; then
   echo "Error: POSTGRES_PASSWORD not found in .env" >&2
@@ -26,6 +27,11 @@ fi
 
 if [[ -z "$GITEA_API_TOKEN" ]]; then
   echo "Error: GITEA_API_TOKEN not found in .env" >&2
+  exit 1
+fi
+
+if [[ -z "$OPENROUTER_API_KEY" ]]; then
+  echo "Error: OPENROUTER_API_KEY not found in .env" >&2
   exit 1
 fi
 
@@ -48,3 +54,11 @@ kubectl create secret generic gitea-token \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "gitea-token secret applied."
+
+# Required: OPENROUTER_API_KEY=sk-or-...
+# Get from https://openrouter.ai/keys
+kubectl create secret generic openrouter-secret \
+  --from-literal=api_key="${OPENROUTER_API_KEY}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+echo "openrouter-secret applied."
