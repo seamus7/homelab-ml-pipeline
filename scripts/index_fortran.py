@@ -14,6 +14,7 @@ Usage:
 import argparse
 import hashlib
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -30,7 +31,8 @@ import parse_fortran  # noqa: E402  (local import after sys.path manipulation)
 # Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_OLLAMA_URL = "http://ollama:11434"
+_DEFAULT_OLLAMA_URL = os.getenv("INFERENCE_URL", "http://ollama:11434")
+_DEFAULT_EMBED_URL  = os.getenv("EMBED_URL",      "http://ollama:11434")
 _DEFAULT_QDRANT_URL = "http://qdrant:6333"
 _DEFAULT_COLLECTION = "fortran_subroutines"
 
@@ -115,10 +117,16 @@ def _build_prompt(chunk: dict) -> str:
 
 
 def _generate(ollama_url: str, prompt: str) -> str:
-    url = ollama_url.rstrip("/") + "/api/generate"
-    body = {"model": _GEN_MODEL, "prompt": prompt, "stream": False}
+    """Call LiteLLM (or Ollama directly) via OpenAI-compatible endpoint."""
+    url = ollama_url.rstrip("/") + "/chat/completions"
+    body = {
+        "model": os.getenv("INFERENCE_MODEL", _GEN_MODEL),
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 2048,
+        "stream": False,
+    }
     result = _http("POST", url, body, timeout=120)
-    return result.get("response", "").strip()
+    return result["choices"][0]["message"]["content"].strip()
 
 
 def stage_summarize(chunks: list[dict], ollama_url: str) -> list[dict]:
@@ -277,7 +285,7 @@ def main() -> None:
     args = ap.parse_args()
 
     # Pre-flight: verify embed model is available before spending time on parsing/summarizing
-    _check_embed_model(args.ollama_url)
+    _check_embed_model(_DEFAULT_EMBED_URL)
 
     # Ensure collection exists (or reset it)
     try:
@@ -287,8 +295,8 @@ def main() -> None:
         sys.exit(1)
 
     chunks = stage_parse(args.paths)
-    chunks = stage_summarize(chunks, args.ollama_url)
-    chunks = stage_embed(chunks, args.ollama_url)
+    chunks = stage_summarize(chunks, args.ollama_url)   # → LiteLLM
+    chunks = stage_embed(chunks, _DEFAULT_EMBED_URL)    # → Ollama direct
 
     try:
         stage_upsert(chunks, args.qdrant_url, args.collection)

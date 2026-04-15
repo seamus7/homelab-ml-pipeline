@@ -27,7 +27,7 @@ from pathlib import Path
 # Configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_OLLAMA_URL = "http://ollama:11434"
+_DEFAULT_OLLAMA_URL = os.getenv("INFERENCE_URL", "http://ollama:11434")
 _GEN_MODEL = "qwen3-coder-next"
 
 # ---------------------------------------------------------------------------
@@ -54,14 +54,16 @@ def _http(method: str, url: str, body: dict | None = None, timeout: int = 120) -
 
 
 def _generate(ollama_url: str, prompt: str) -> str:
-    url = ollama_url.rstrip("/") + "/api/generate"
-    result = _http(
-        "POST",
-        url,
-        {"model": _GEN_MODEL, "prompt": prompt, "stream": False},
-        timeout=180,
-    )
-    return result.get("response", "").strip()
+    """Call LiteLLM (or Ollama directly) via OpenAI-compatible endpoint."""
+    url = ollama_url.rstrip("/") + "/chat/completions"
+    body = {
+        "model": os.getenv("INFERENCE_MODEL", _GEN_MODEL),
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 2048,
+        "stream": False,
+    }
+    result = _http("POST", url, body, timeout=180)
+    return result["choices"][0]["message"]["content"].strip()
 
 
 # ---------------------------------------------------------------------------

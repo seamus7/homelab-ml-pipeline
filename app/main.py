@@ -36,6 +36,9 @@ import translate_fortran  # noqa: E402
 # ---------------------------------------------------------------------------
 
 OLLAMA_URL        = os.environ.get("OLLAMA_URL",        "http://ollama:11434")
+INFERENCE_URL     = os.getenv("INFERENCE_URL",     "http://ollama:11434")
+INFERENCE_MODEL   = os.getenv("INFERENCE_MODEL",   "qwen3-coder-next")
+EMBED_URL         = os.getenv("EMBED_URL",         "http://ollama:11434")
 QDRANT_URL        = os.environ.get("QDRANT_URL",        "http://qdrant:6333")
 COLLECTION        = os.environ.get("COLLECTION",        "fortran_subroutines")
 GITEA_URL         = os.getenv("GITEA_URL",         "http://gitea:3000")
@@ -123,9 +126,16 @@ def _build_prompt(chunk: dict) -> str:
 
 
 def _generate(ollama_url: str, prompt: str) -> str:
-    url = ollama_url.rstrip("/") + "/api/generate"
-    result = _http("POST", url, {"model": _GEN_MODEL, "prompt": prompt, "stream": False}, timeout=120)
-    return result.get("response", "").strip()
+    """Call LiteLLM (or Ollama directly) via OpenAI-compatible endpoint."""
+    url = ollama_url.rstrip("/") + "/chat/completions"
+    body = {
+        "model": INFERENCE_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 2048,
+        "stream": False,
+    }
+    result = _http("POST", url, body, timeout=120)
+    return result["choices"][0]["message"]["content"].strip()
 
 
 def _ensure_collection(qdrant_url: str, collection: str, reset: bool) -> None:
@@ -161,16 +171,16 @@ def _run_pipeline(paths: list[str], ollama_url: str, qdrant_url: str,
     for f in files:
         chunks.extend(parse_fortran.parse_file(f, base_dir))
 
-    # Summarize
+    # Summarize — generation goes through LiteLLM
     summarized = []
     for chunk in chunks:
-        summary = _generate(ollama_url, _build_prompt(chunk))
+        summary = _generate(INFERENCE_URL, _build_prompt(chunk))
         summarized.append({**chunk, "summary": summary})
 
-    # Embed
+    # Embed — stays on Ollama directly
     embedded = []
     for chunk in summarized:
-        vector = _embed(ollama_url, chunk.get("summary", ""))
+        vector = _embed(EMBED_URL, chunk.get("summary", ""))
         embedded.append({**chunk, "embedding": vector})
 
     # Upsert
@@ -265,7 +275,7 @@ def search_endpoint(req: SearchRequest):
         raise HTTPException(status_code=400, detail="query must not be empty")
 
     try:
-        vector = _embed(OLLAMA_URL, req.query)
+        vector = _embed(EMBED_URL, req.query)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=f"Embedding failed: {exc}")
 
@@ -386,7 +396,7 @@ def translate_endpoint(req: TranslateRequest):
             ),
         )
 
-    return translate_fortran.translate_subroutine(chunk, OLLAMA_URL, req.max_iterations)
+    return translate_fortran.translate_subroutine(chunk, INFERENCE_URL, req.max_iterations)
 
 
 @app.post("/translate/pr")
@@ -455,7 +465,7 @@ def ask_endpoint(req: AskRequest):
         raise HTTPException(status_code=400, detail="query must not be empty")
 
     try:
-        vector = _embed(OLLAMA_URL, req.query)
+        vector = _embed(EMBED_URL, req.query)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=f"Embedding failed: {exc}")
 
@@ -513,67 +523,32 @@ def ask_endpoint(req: AskRequest):
     )
 
     def generate():
-        ollama_url = OLLAMA_URL.rstrip("/") + "/api/generate"
-        body = json.dumps({"model": _GEN_MODEL, "prompt": prompt, "stream": True}).encode()
+        inference_url = INFERENCE_URL.rstrip("/") + "/chat/completions"
+        body = json.dumps({
+            "model": INFERENCE_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,
+        }).encode()
         req_obj = urllib.request.Request(
-            ollama_url, data=body,
+            inference_url, data=body,
             headers={"Content-Type": "application/json"}, method="POST",
         )
-        in_think = False
-        buf = ""
         try:
             with urllib.request.urlopen(req_obj, timeout=300) as resp:
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line:
+                    if not line or not line.startswith("data: "):
                         continue
+                    data = line[6:]  # strip "data: "
+                    if data == "[DONE]":
+                        break
                     try:
-                        obj = json.loads(line)
+                        obj = json.loads(data)
                     except json.JSONDecodeError:
                         continue
-
-                    buf += obj.get("response", "")
-                    done = obj.get("done", False)
-
-                    # Strip <think>...</think> blocks as tokens arrive
-                    while True:
-                        if not in_think:
-                            idx = buf.find("<think>")
-                            if idx == -1:
-                                # Emit all but a possible partial tag at the tail
-                                safe = len(buf)
-                                for plen in range(min(7, len(buf)), 0, -1):
-                                    if "<think>"[:plen] == buf[-plen:]:
-                                        safe = len(buf) - plen
-                                        break
-                                if safe > 0:
-                                    yield buf[:safe]
-                                    buf = buf[safe:]
-                                break
-                            else:
-                                if idx > 0:
-                                    yield buf[:idx]
-                                buf = buf[idx + 7:]
-                                in_think = True
-                        else:
-                            idx = buf.find("</think>")
-                            if idx == -1:
-                                # Discard think content, keep possible partial close tag
-                                safe_discard = len(buf)
-                                for plen in range(min(8, len(buf)), 0, -1):
-                                    if "</think>"[:plen] == buf[-plen:]:
-                                        safe_discard = len(buf) - plen
-                                        break
-                                buf = buf[safe_discard:]
-                                break
-                            else:
-                                buf = buf[idx + 8:]
-                                in_think = False
-
-                    if done:
-                        if not in_think and buf:
-                            yield buf
-                        break
+                    content = obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if content:
+                        yield content
         except Exception as exc:
             yield f"\n[Stream error: {exc}]"
 

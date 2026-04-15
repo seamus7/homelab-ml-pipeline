@@ -13,6 +13,7 @@ data:
   GITEA_REPO_NAME: "fortran-modernizer"
   INFERENCE_URL: "http://litellm:4000"
   INFERENCE_MODEL: "default"
+  EMBED_URL: "http://ollama:11434"
 ---
 apiVersion: apps/v1
 kind: Deployment

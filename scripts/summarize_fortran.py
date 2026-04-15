@@ -11,13 +11,15 @@ Usage:
 
 import argparse
 import json
+import os
+import re
 import sys
 import urllib.error
 import urllib.request
 
 
-_DEFAULT_OLLAMA_URL = "http://ollama:11434"
-_MODEL = "qwen3-coder-next"
+_DEFAULT_OLLAMA_URL = os.getenv("INFERENCE_URL", "http://ollama:11434")
+_GEN_MODEL = "qwen3-coder-next"
 
 
 def _build_prompt(chunk: dict) -> str:
@@ -49,14 +51,21 @@ def _build_prompt(chunk: dict) -> str:
     )
 
 
-def _ollama_generate(base_url: str, prompt: str) -> str:
-    url = base_url.rstrip("/") + "/api/generate"
-    payload = json.dumps({
-        "model": _MODEL,
-        "prompt": prompt,
-        "stream": False,
-    }).encode()
+def _strip_think(text: str) -> str:
+    """Remove <think>...</think> blocks — safety net, LiteLLM normalises these."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
+
+def _generate(ollama_url: str, prompt: str) -> str:
+    """Call LiteLLM (or Ollama directly) via OpenAI-compatible endpoint."""
+    url = ollama_url.rstrip("/") + "/chat/completions"
+    body = {
+        "model": os.getenv("INFERENCE_MODEL", _GEN_MODEL),
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 2048,
+        "stream": False,
+    }
+    payload = json.dumps(body).encode()
     req = urllib.request.Request(
         url,
         data=payload,
@@ -65,10 +74,10 @@ def _ollama_generate(base_url: str, prompt: str) -> str:
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            body = json.loads(resp.read())
-            return body.get("response", "").strip()
+            result = json.loads(resp.read())
+            return result["choices"][0]["message"]["content"].strip()
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Ollama request failed: {exc}") from exc
+        raise RuntimeError(f"Inference request failed: {exc}") from exc
 
 
 def summarize(chunks: list[dict], ollama_url: str) -> list[dict]:
@@ -78,7 +87,7 @@ def summarize(chunks: list[dict], ollama_url: str) -> list[dict]:
         name = chunk["name"]
         print(f"Summarizing {i}/{total}: {name}...", file=sys.stderr, flush=True)
         prompt = _build_prompt(chunk)
-        summary = _ollama_generate(ollama_url, prompt)
+        summary = _generate(ollama_url, prompt)
         results.append({**chunk, "summary": summary})
     return results
 

@@ -2,7 +2,7 @@
 
 An internal tooling demo for Fortran code intelligence. Given a legacy Fortran codebase, this service parses it into subroutine-level chunks, generates plain-English summaries via a local LLM, indexes them in a vector store, and exposes five features through a web UI and REST API: semantic search, code health analysis, auto-documentation, agentic translation to Python with numerical verification, and RAG-based Q&A.
 
-Built as a portfolio piece demonstrating a self-hosted ML inference pipeline on k3s. All inference runs locally — no API keys, no external calls.
+Built as a portfolio piece demonstrating a self-hosted ML inference pipeline on k3s. Default inference runs locally on an RTX 5090 via Ollama — no API keys required. Cloud models (Claude Sonnet, GLM) are available via OpenRouter through LiteLLM with a single environment variable change.
 
 ---
 
@@ -16,9 +16,37 @@ Built as a portfolio piece demonstrating a self-hosted ML inference pipeline on 
 | **FastAPI + uvicorn** | API server | Async, clean OpenAPI docs, minimal boilerplate |
 | **Gitea** | Self-hosted Git | PR creation target for translation output; acts as the output registry |
 | **Traefik** | Ingress | k3s default; zero-config routing to `modernizer.homelab.local` |
+| **LiteLLM** | Model-agnostic inference proxy | Routes generation requests to local Ollama, OpenRouter, or AWS Bedrock without code changes — swap providers via environment variable |
 | **gfortran** | Fortran compiler | Used inside the container for numerical verification during translation |
 
 The service is a single container (`modernizer:latest`) with no external dependencies beyond the k3s cluster services.
+
+---
+
+## Model Configuration
+
+The pipeline is model-agnostic via LiteLLM. Generation requests route through `http://litellm:4000` inside the cluster. Switch providers by changing two environment variables — no code changes required.
+
+| `INFERENCE_MODEL` | Routes to | Cost |
+|---|---|---|
+| `default` | qwen3-coder-next via local Ollama | Free (local GPU) |
+| `sonnet` | Claude Sonnet 4.6 via OpenRouter | ~$0.005/subroutine |
+| `glm` | GLM-5.1 via OpenRouter | ~$0.002/subroutine |
+
+To run the summarization pipeline against a different model:
+```bash
+export INFERENCE_URL=http://localhost:4000  # port-forwarded LiteLLM
+export INFERENCE_MODEL=sonnet
+python3 scripts/index_fortran.py /path/to/fortran/ --reset
+```
+
+**Quality comparison — GRVINT (opaque F77, no comments):**
+
+qwen3-coder-next (local): Correctly identifies inverse-distance weighting, coincidence guard, and output variable. Good summary.
+
+Claude Sonnet: Same accuracy plus names the reason for the coincidence guard ("to avoid division by zero"), explicitly describes weight normalization, and caught a mixed single/double precision declaration that qwen missed. Noticeably more precise on technical detail.
+
+For a 5,000-subroutine production codebase: ~$25 to index with Sonnet vs free with local qwen. The choice is a config change.
 
 ---
 
@@ -34,7 +62,8 @@ FastAPI (modernizer:8000)
      ├── health_fortran.py     ← static analysis metrics
      └── translate_fortran.py  ← agentic LLM + gfortran loop
      │
-     ├── Ollama  (qwen3-coder-next, nomic-embed-text)
+     ├── LiteLLM (inference proxy → Ollama / OpenRouter / Bedrock)
+     ├── Ollama  (qwen3-coder-next, nomic-embed-text — default backend)
      ├── Qdrant  (vector index of subroutine summaries)
      └── Gitea   (PR creation for translated Python)
 ```
@@ -284,6 +313,9 @@ docker build -t modernizer:latest .
 # Create the Gitea token secret
 kubectl create secret generic gitea-token --from-literal=token=<your-token>
 
+# Add OPENROUTER_API_KEY to .env, then:
+source .env && bash k8s/create-secrets.sh
+
 # Apply the manifest
 kubectl apply -f k8s/modernizer.yaml
 
@@ -360,5 +392,3 @@ A pre-translation step that rewrites legacy Fortran in place: GOTO → structure
 **Gitea container registry mirroring**
 Automate mirroring of the `modernizer:latest` image into the Gitea container registry so the k8s manifest can pull from the internal registry rather than requiring the image to be pre-built on the node with `imagePullPolicy: Never`.
 
-**LiteLLM / Bedrock integration for model swapping**
-Route Ollama calls through LiteLLM to support swapping in AWS Bedrock or other providers without changing application code. Useful for comparing translation quality between local `qwen3-coder-next` and a cloud model, or for running on hardware without a capable GPU.
