@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-brain-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-brain-mcp
+  template:
+    metadata:
+      labels:
+        app: open-brain-mcp
+    spec:
+      containers:
+        - name: open-brain-mcp
+          image: denoland/deno:alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - deno
+            - run
+            - --allow-net
+            - --allow-env
+            - --allow-read
+            - /app/index.ts
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: open-brain-mcp-secret
+                  key: supabase-url
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: open-brain-mcp-secret
+                  key: service-role-key
+            - name: MCP_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: open-brain-mcp-secret
+                  key: mcp-access-key
+            - name: OLLAMA_URL
+              valueFrom:
+                secretKeyRef:
+                  name: open-brain-mcp-secret
+                  key: ollama-url
+            - name: LITELLM_URL
+              valueFrom:
+                secretKeyRef:
+                  name: open-brain-mcp-secret
+                  key: litellm-url
+          volumeMounts:
+            - name: function-code
+              mountPath: /app
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: function-code
+          hostPath:
+            path: /home/francis/repos/OB1/server/local-deploy
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-brain-mcp
+spec:
+  selector:
+    app: open-brain-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: open-brain-mcp
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`open-brain.homelab.local`)
+      kind: Rule
+      services:
+        - name: open-brain-mcp
+          port: 8000

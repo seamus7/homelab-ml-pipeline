@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: supabase-postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supabase-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: supabase-postgres
+  template:
+    metadata:
+      labels:
+        app: supabase-postgres
+    spec:
+      containers:
+        - name: supabase-postgres
+          image: supabase/postgres:15.14.1.095
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-postgres-secret
+                  key: password
+            - name: POSTGRES_DB
+              value: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: supabase-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supabase-db
+spec:
+  selector:
+    app: supabase-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
