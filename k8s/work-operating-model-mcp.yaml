@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: work-operating-model-mcp
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: work-operating-model-mcp
