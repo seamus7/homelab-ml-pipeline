@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: work-operating-model-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: work-operating-model-mcp
+  template:
+    metadata:
+      labels:
+        app: work-operating-model-mcp
+    spec:
+      containers:
+        - name: work-operating-model-mcp
+          image: denoland/deno:alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - deno
+            - run
+            - --allow-net
+            - --allow-env
+            - --allow-read
+            - /app/index.ts
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: work-operating-model-secret
+                  key: supabase-url
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: work-operating-model-secret
+                  key: service-role-key
+            - name: MCP_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: work-operating-model-secret
+                  key: mcp-access-key
+            - name: DEFAULT_USER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: work-operating-model-secret
+                  key: default-user-id
+          volumeMounts:
+            - name: function-code
+              mountPath: /app
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: function-code
+          hostPath:
+            path: /home/francis/repos/OB1/recipes/work-operating-model-activation/local-deploy
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: work-operating-model-mcp
+spec:
+  selector:
+    app: work-operating-model-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: work-operating-model-mcp
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`work-operating-model.homelab.local`)
+      kind: Rule
+      services:
+        - name: work-operating-model-mcp
+          port: 8000
