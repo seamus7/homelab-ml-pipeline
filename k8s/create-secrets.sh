@@ -20,6 +20,9 @@ AUTHENTICATOR_PASS=$(grep -E '^AUTHENTICATOR_PASS=' "$ENV_FILE" | cut -d= -f2-)
 SUPABASE_SERVICE_ROLE_KEY=$(grep -E '^SUPABASE_SERVICE_ROLE_KEY=' "$ENV_FILE" | cut -d= -f2-)
 MCP_ACCESS_KEY=$(grep -E '^MCP_ACCESS_KEY=' "$ENV_FILE" | cut -d= -f2-)
 DEFAULT_USER_ID=$(grep -E '^DEFAULT_USER_ID=' "$ENV_FILE" | cut -d= -f2-)
+MATTERMOST_DB_PASSWORD=$(grep -E '^MATTERMOST_DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
+MATTERMOST_WEBHOOK_URL=$(grep -E '^MATTERMOST_WEBHOOK_URL=' "$ENV_FILE" | cut -d= -f2-)
+MATTERMOST_BOT_TOKEN==$(grep -E '^MATTERMOST_BOT_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
 
 require_var() {
   local name="$1" value="$2"
@@ -29,16 +32,19 @@ require_var() {
   fi
 }
 
-require_var POSTGRES_PASSWORD     "$POSTGRES_PASSWORD"
-require_var RUNNER_TOKEN          "$RUNNER_TOKEN"
-require_var GITEA_API_TOKEN       "$GITEA_API_TOKEN"
-require_var OPENROUTER_API_KEY    "$OPENROUTER_API_KEY"
-require_var SUPABASE_DB_PASSWORD  "$SUPABASE_DB_PASSWORD"
-require_var JWT_SECRET            "$JWT_SECRET"
-require_var AUTHENTICATOR_PASS    "$AUTHENTICATOR_PASS"
+require_var POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
+require_var RUNNER_TOKEN "$RUNNER_TOKEN"
+require_var GITEA_API_TOKEN "$GITEA_API_TOKEN"
+require_var OPENROUTER_API_KEY "$OPENROUTER_API_KEY"
+require_var SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD"
+require_var JWT_SECRET "$JWT_SECRET"
+require_var AUTHENTICATOR_PASS "$AUTHENTICATOR_PASS"
 require_var SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
-require_var MCP_ACCESS_KEY        "$MCP_ACCESS_KEY"
-require_var DEFAULT_USER_ID       "$DEFAULT_USER_ID"
+require_var MCP_ACCESS_KEY "$MCP_ACCESS_KEY"
+require_var DEFAULT_USER_ID "$DEFAULT_USER_ID"
+require_var MATTERMOST_DB_PASSWORD "$MATTERMOST_DB_PASSWORD"
+require_var MATTERMOST_WEBHOOK_URL "$MATTERMOST_WEBHOOK_URL"
+require_var MATTERMOST_BOT_TOKEN "$MATTERMOST_BOT_TOKEN"
 
 kubectl create secret generic postgres-secret \
   --from-literal=POSTGRES_USER=admin \
@@ -89,3 +95,11 @@ kubectl create secret generic work-operating-model-secret \
   --from-literal=default-user-id="${DEFAULT_USER_ID}" \
   --dry-run=client -o yaml | kubectl apply -f -
 echo "work-operating-model-secret applied."
+
+kubectl create secret generic mattermost-secret \
+  --namespace agents \
+  --from-literal=db-dsn="postgres://mattermost:${MATTERMOST_DB_PASSWORD}@db.default.svc.cluster.local:5432/mattermost?sslmode=disable" \
+  --from-literal=webhook-url="${MATTERMOST_WEBHOOK_URL}" \
+  --from-literal=bot-token="${MATTERMOST_BOT_TOKEN}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+echo "mattermost-secret applied."
